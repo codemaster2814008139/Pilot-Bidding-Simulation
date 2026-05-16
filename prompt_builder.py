@@ -174,32 +174,109 @@ def pairwise_prompt(pilot: Pilot, pairing_a: Pairing, pairing_b: Pairing) -> str
 
 
 # ---------------------------------------------------------------------------
-# Scoring prompt (Scenario 5+ — score a single pairing independently)
+# Scoring prompt (independent per-pairing scoring)
 # ---------------------------------------------------------------------------
 
-def scoring_prompt(pilot: Pilot, pairing: Pairing) -> str:
+def generate_anchor(pilot: Pilot) -> str:
+    """
+    Generate a calibration anchor string for the independent scoring prompt.
+
+    Values are derived from the pilot's oracle weights and profile so the LLM
+    understands what 90-100, 45-55, and 0-15 mean for THIS specific pilot.
+    The anchor is embedded in the scoring prompt to reduce inter-call variance.
+    """
+    w   = pilot.weights
+    ac  = pilot.preferred_type
+    high_pay = round(pilot.base_pay * 7)
+    mid_pay  = round(pilot.base_pay * 5)
+    low_pay  = round(pilot.base_pay * 3)
+
+    if pilot.has_kids:
+        top_desc = (
+            f"0 hotel nights (home each day), TAFB under 30h, "
+            f"{ac} aircraft, report after 8am, "
+            f"pay above ${high_pay:,}/trip"
+        )
+        mid_desc = (
+            f"1–2 hotel nights, TAFB 40–55h, acceptable aircraft, "
+            f"report 5–7am, pay ~${mid_pay:,}/trip"
+        )
+        low_desc = (
+            f"wrong aircraft type (not qualified), TAFB over 70h, "
+            f"2+ nights away, report before 5am, pay under ${low_pay:,}/trip"
+        )
+    elif pilot.is_mid_career:
+        top_desc = (
+            f"preferred {ac} aircraft, TAFB under 35h, 1 night away, "
+            f"report after 7am, total value over ${high_pay:,}/trip"
+        )
+        mid_desc = (
+            f"acceptable aircraft, TAFB 45–60h, 2 nights, "
+            f"report 5:30–7am, pay ~${mid_pay:,}/trip"
+        )
+        low_desc = (
+            f"wrong aircraft type, TAFB over 75h, 3+ nights, "
+            f"report before 4:30am, low pay"
+        )
+    else:
+        top_desc = (
+            f"preferred {ac} aircraft, interesting route, "
+            f"high credit pay over ${high_pay:,}/trip, good per diem"
+        )
+        mid_desc = (
+            f"acceptable aircraft, moderate pay ~${mid_pay:,}/trip, "
+            f"mixed schedule"
+        )
+        low_desc = (
+            f"not qualified for aircraft, very low pay, "
+            f"tedious short hops, report before 4am"
+        )
+
+    return (
+        f"SCORING ANCHOR — calibrated for Capt. {pilot.name}:\n"
+        f"  90–100: {top_desc}\n"
+        f"  45–55:  {mid_desc}\n"
+        f"  0–15:   {low_desc}\n"
+        f"  Weight priorities: TAFB ({w.tafb}%), hotel nights ({w.hotel_nights}%), "
+        f"report time ({w.report_time}%), aircraft ({w.aircraft}%), "
+        f"credit pay ({w.credit_pay}%)"
+    )
+
+
+def scoring_prompt(pilot: Pilot, pairing: Pairing, anchor: str = "") -> str:
     """
     Prompt asking the LLM to score a single pairing for a pilot (0–100).
-    Used for the scaled scoring approach (Scenarios 5-7 in the roadmap).
 
     Each call is independent — the LLM does NOT see other pairings.
-    Scores are then sorted externally to produce a ranking.
+    Scores are sorted externally to produce a ranking.
 
-    Note: validate score consistency before relying on this at scale.
+    Args:
+        pilot:   The pilot being evaluated.
+        pairing: The single pairing to score.
+        anchor:  Calibration string from generate_anchor(). If empty,
+                 a generic 0/50/100 description is used instead.
+
+    Note: validate score consistency with validate_scoring_consistency()
+    before relying on rankings derived from these scores at scale.
     """
+    anchor_block = anchor if anchor else (
+        "  100 = perfectly matches all preferences\n"
+        "  50  = neutral / mixed tradeoffs\n"
+        "  0   = completely unsuitable (wrong aircraft, extreme TAFB, etc.)"
+    )
+
     return (
         "You are evaluating how well a flight pairing fits a specific airline pilot's preferences.\n\n"
         "== PILOT PROFILE ==\n"
         f"{_pilot_profile(pilot)}\n\n"
         "== HOW THIS PILOT PRIORITISES ==\n"
         f"{_priority_list(pilot)}\n\n"
+        "== SCORING CALIBRATION ==\n"
+        f"{anchor_block}\n\n"
         "== PAIRING TO EVALUATE ==\n"
         f"{_pairing_summary(pilot, pairing)}\n\n"
         "== TASK ==\n"
-        "Score this pairing for this pilot on a scale of 0–100, where:\n"
-        "  100 = perfectly matches all preferences\n"
-        "  50  = neutral / mixed tradeoffs\n"
-        "  0   = completely unsuitable (wrong aircraft, extreme TAFB, etc.)\n\n"
+        "Score this pairing for this pilot on a scale of 0–100 using the calibration above.\n"
         "If the pilot is not qualified for the aircraft type, score must be 0.\n\n"
         "Reply ONLY with JSON (no markdown):\n"
         '{"score": <0-100>, "eligible": <true/false>, '

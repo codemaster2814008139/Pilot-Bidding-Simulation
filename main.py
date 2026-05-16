@@ -21,17 +21,19 @@ Usage (automated mode — requires ANTHROPIC_API_KEY or OPENAI_API_KEY):
 """
 
 import argparse
+import asyncio
 import json
 import os
+import random
 import sys
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from models import LLMPairingRank, Pilot, Pairing, OracleWeights
+from models import LLMPairingRank, ScoredPairing, Pilot, Pairing, OracleWeights
 from generator import ScenarioGenerator
 from oracle import oracle_rank_pilot, oracle_rank_all
-from prompt_builder import oracle_prompt, pairwise_prompt
-from evaluator import evaluate_pilot, pairwise_agreement, pairwise_summary
+from prompt_builder import oracle_prompt, pairwise_prompt, scoring_prompt, generate_anchor
+from evaluator import evaluate_pilot, pairwise_agreement, pairwise_summary, evaluate_scoring_stability
 from allocator import (
     oracle_allocation, llm_allocation,
     compare_allocations, format_allocation_report
@@ -93,6 +95,186 @@ def parse_pairwise_response(raw: str) -> Optional[dict]:
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"  ⚠ Parse error: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Scoring mode helpers
+# ---------------------------------------------------------------------------
+
+def parse_scoring_response(
+    raw: str,
+    call_idx: int,
+    pairing: Pairing,
+) -> Optional[ScoredPairing]:
+    """Parse a single independent scoring LLM response into a ScoredPairing."""
+    try:
+        clean = raw.strip().replace("```json", "").replace("```", "").strip()
+        data  = json.loads(clean)
+        return ScoredPairing(
+            pairing=pairing,
+            score=max(0, min(100, int(data["score"]))),
+            eligible=bool(data.get("eligible", True)),
+            short_reason=data.get("shortReason", ""),
+            pros=data.get("pros", []),
+            cons=data.get("cons", []),
+            call_idx=call_idx,
+        )
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"  ⚠ Parse error (call {call_idx}, P{pairing.id}): {e}")
+        return None
+
+
+async def _score_one(
+    pilot: Pilot,
+    pairing: Pairing,
+    call_idx: int,
+    provider: str,
+    model: str,
+    sem: asyncio.Semaphore,
+) -> Optional[ScoredPairing]:
+    """
+    Single async scoring call protected by a semaphore.
+    Uses the Anthropic or OpenAI async client depending on provider.
+    """
+    prompt = scoring_prompt(pilot, pairing, anchor=generate_anchor(pilot))
+    async with sem:
+        try:
+            if provider == "anthropic":
+                import anthropic as _anthropic
+                client = _anthropic.AsyncAnthropic()
+                msg = await client.messages.create(
+                    model=model,
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = msg.content[0].text
+            else:
+                import openai as _openai
+                client = _openai.AsyncOpenAI()
+                resp = await client.chat.completions.create(
+                    model=model,
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = resp.choices[0].message.content
+            return parse_scoring_response(raw, call_idx, pairing)
+        except Exception as e:
+            print(f"  ⚠ API error (call {call_idx}, P{pairing.id} for {pilot.name}): {e}")
+            return None
+
+
+async def run_independent_scoring(
+    pilots: List[Pilot],
+    pairings: List[Pairing],
+    provider: str,
+    model: str,
+    batch_size: int = 20,
+) -> Dict[int, List[ScoredPairing]]:
+    """
+    Score all pilot × pairing combinations in parallel batches.
+
+    Uses asyncio + the provider's async client.  At most `batch_size`
+    concurrent calls are active at any moment (semaphore-controlled).
+
+    Returns:
+        dict: pilot.id → List[ScoredPairing] sorted by score descending.
+    """
+    sem   = asyncio.Semaphore(batch_size)
+    tasks = []
+    owner = []   # parallel list: which pilot.id owns each task
+
+    call_idx = 0
+    for pilot in pilots:
+        for pairing in pairings:
+            tasks.append(_score_one(pilot, pairing, call_idx, provider, model, sem))
+            owner.append(pilot.id)
+            call_idx += 1
+
+    total = len(tasks)
+    print(f"  Dispatching {total} scoring calls (≤{batch_size} concurrent)…")
+    results_flat = await asyncio.gather(*tasks)
+
+    by_pilot: Dict[int, List[ScoredPairing]] = {p.id: [] for p in pilots}
+    for pilot_id, scored in zip(owner, results_flat):
+        if scored is not None:
+            by_pilot[pilot_id].append(scored)
+
+    for pid in by_pilot:
+        by_pilot[pid].sort(key=lambda s: -s.score)
+
+    return by_pilot
+
+
+async def validate_scoring_consistency(
+    pilot: Pilot,
+    pairing: Pairing,
+    provider: str,
+    model: str,
+    n_runs: int = 3,
+) -> dict:
+    """
+    Call the scoring prompt n_runs times for the same pilot+pairing.
+
+    Returns stability metrics from evaluate_scoring_stability().
+    Prints a warning when std > 10 (scores are unreliable for ranking).
+    """
+    sem   = asyncio.Semaphore(n_runs)
+    tasks = [_score_one(pilot, pairing, i, provider, model, sem) for i in range(n_runs)]
+    raw_results = await asyncio.gather(*tasks)
+    scores = [r.score for r in raw_results if r is not None]
+    stats  = evaluate_scoring_stability(scores)
+    if not stats["stable"]:
+        print(
+            f"  ⚠ UNSTABLE — P{pairing.id} × {pilot.name}: "
+            f"std={stats['std']}  mean={stats['mean']}  scores={scores}"
+        )
+    return stats
+
+
+async def run_consistency_checks(
+    pilots: List[Pilot],
+    pairings: List[Pairing],
+    provider: str,
+    model: str,
+    n_samples: int = 3,
+) -> None:
+    """
+    Randomly select n_samples qualified pilot+pairing pairs and validate
+    score consistency.  Prints a warning for any unstable pair.
+    """
+    candidates = [(p, pair) for p in pilots for pair in pairings if p.can_fly(pair)]
+    sample     = random.sample(candidates, min(n_samples, len(candidates)))
+    print(f"  Consistency check on {len(sample)} pilot+pairing sample(s)…")
+    for pilot, pairing in sample:
+        stats = await validate_scoring_consistency(pilot, pairing, provider, model)
+        marker = "✓ stable" if stats["stable"] else "⚠ UNSTABLE"
+        print(
+            f"    P{pairing.id} × {pilot.name}: "
+            f"mean={stats['mean']}  std={stats['std']}  [{marker}]"
+        )
+
+
+def scored_pairings_to_llm_ranking(
+    scored: List[ScoredPairing],
+) -> List[LLMPairingRank]:
+    """
+    Convert a score-sorted List[ScoredPairing] to List[LLMPairingRank].
+
+    Enables the existing evaluate_pilot() / spearman_rho() functions to work
+    unchanged on scoring-mode output.  The scored list must already be sorted
+    best → worst (highest score = rank 1).
+    """
+    return [
+        LLMPairingRank(
+            pairing_id=sp.pairing.id,
+            rank=rank,
+            eligible=sp.eligible,
+            short_reason=sp.short_reason,
+            pros=sp.pros,
+            cons=sp.cons,
+        )
+        for rank, sp in enumerate(scored, start=1)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +489,12 @@ def main():
     parser.add_argument("--auto",     action="store_true",   help="Auto-call LLM API")
     parser.add_argument("--provider", default="openai",      help="anthropic or openai")
     parser.add_argument("--model",    default="gpt-4o",      help="Model name")
+    parser.add_argument(
+        "--mode",
+        choices=["oracle", "scoring"],
+        default="oracle",
+        help="Evaluation mode: oracle (rank-all prompt) or scoring (independent 0-100 per pairing)",
+    )
     parser.add_argument("--pilots",   type=int, default=3,   help="Number of pilots")
     parser.add_argument("--pairings", type=int, default=5,   help="Number of pairings")
     parser.add_argument("--pilot-seed",   type=int, default=1234567)
@@ -328,7 +516,8 @@ def main():
     print(f"  Pilots:   {config['n_pilots']}")
     print(f"  Pairings: {config['n_pairings']}")
     print(f"  Base:     {config['base']}")
-    print(f"  Mode:     {'Automated (' + args.model + ')' if args.auto else 'Manual'}")
+    mode_label = args.mode.upper() + (" — automated (" + args.model + ")" if args.auto else " — manual")
+    print(f"  Mode:     {mode_label}")
     print("="*60)
 
     # 1. Generate scenario
@@ -347,11 +536,34 @@ def main():
         print(f"  Capt. {pilot.name}: best = P{top.pairing.id} ({top.oracle_score}pts)")
 
     # 3. Get LLM rankings
-    print(f"\n[3/5] {'Calling LLM API' if args.auto else 'Collecting LLM responses (manual)'}...")
-    if args.auto:
-        llm_rankings = auto_oracle_run(pilots, pairings, args.model, args.provider)
+    if args.mode == "scoring":
+        if not args.auto:
+            print("\nScoring mode requires --auto (API key needed for parallel calls).")
+            print("Use --mode oracle for manual copy-paste workflow.")
+            sys.exit(1)
+
+        print("\n[2.5/5] Pre-flight consistency check…")
+        asyncio.run(run_consistency_checks(pilots, pairings, args.provider, args.model))
+
+        print(f"\n[3/5] Independent scoring — {len(pilots)} pilots × {len(pairings)} pairings…")
+        scored_by_pilot = asyncio.run(
+            run_independent_scoring(pilots, pairings, args.provider, args.model)
+        )
+        llm_rankings = {
+            pid: scored_pairings_to_llm_ranking(scored)
+            for pid, scored in scored_by_pilot.items()
+        }
+        for pilot in pilots:
+            if pilot.id in scored_by_pilot:
+                top = scored_by_pilot[pilot.id][0] if scored_by_pilot[pilot.id] else None
+                score_str = f"best = P{top.pairing.id} (score {top.score})" if top else "no results"
+                print(f"  Capt. {pilot.name}: {score_str}")
     else:
-        llm_rankings = manual_oracle_run(pilots, pairings)
+        print(f"\n[3/5] {'Calling LLM API' if args.auto else 'Collecting LLM responses (manual)'}...")
+        if args.auto:
+            llm_rankings = auto_oracle_run(pilots, pairings, args.model, args.provider)
+        else:
+            llm_rankings = manual_oracle_run(pilots, pairings)
 
     if not llm_rankings:
         print("No LLM rankings collected. Exiting.")

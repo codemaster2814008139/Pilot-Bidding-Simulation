@@ -231,6 +231,22 @@ class LLMPairingRank:
 
 
 @dataclass
+class ScoredPairing:
+    """
+    Result of an independent scoring call for one pilot+pairing.
+    One LLM API call produces one ScoredPairing.
+    Scores are sorted externally to produce a ranking.
+    """
+    pairing:      Pairing
+    score:        int         # 0–100
+    eligible:     bool
+    short_reason: str
+    pros:         List[str]
+    cons:         List[str]
+    call_idx:     int         # index of the API call (for debugging)
+
+
+@dataclass
 class EvalMetrics:
     spearman:     float
     top1_match:   bool

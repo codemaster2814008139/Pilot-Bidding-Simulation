@@ -18,7 +18,7 @@ def call_anthropic(prompt: str, model: str = "claude-haiku-4-5-20251001") -> str
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         msg = client.messages.create(
             model=model,
-            max_tokens=1024,
+            max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
         return msg.content[0].text
@@ -37,7 +37,7 @@ def call_openai(prompt: str, model: str = "gpt-4o") -> str:
         resp = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1024,
+            max_tokens=4096,
         )
         return resp.choices[0].message.content or ""
     except ImportError:

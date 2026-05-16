@@ -191,6 +191,48 @@ def pairwise_summary(comparisons: List[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Scoring stability (independent scoring mode)
+# ---------------------------------------------------------------------------
+
+def evaluate_scoring_stability(scores: List[float]) -> dict:
+    """
+    Assess reliability of repeated independent scores for the same pilot+pairing.
+
+    Used before a main scoring run to check whether the LLM produces consistent
+    scores when called multiple times on the same input. High variance (std > 10)
+    means the ranking derived from a single pass may not be trustworthy.
+
+    Args:
+        scores: List of 0–100 scores from n repeated calls for the same pair.
+
+    Returns:
+        dict with keys:
+          mean, std, min, max, coefficient_of_variation (%), stable (bool).
+        stable = True when std <= 10.
+    """
+    if not scores:
+        return {
+            "mean": 0.0, "std": 0.0, "min": 0, "max": 0,
+            "coefficient_of_variation": 0.0, "stable": True,
+        }
+
+    n        = len(scores)
+    mean     = sum(scores) / n
+    variance = sum((s - mean) ** 2 for s in scores) / n
+    std      = math.sqrt(variance)
+    cv       = (std / mean * 100) if mean > 0 else 0.0
+
+    return {
+        "mean":                     round(mean, 1),
+        "std":                      round(std, 1),
+        "min":                      min(scores),
+        "max":                      max(scores),
+        "coefficient_of_variation": round(cv, 1),
+        "stable":                   std <= 10,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Round-robin derived ranking
 # ---------------------------------------------------------------------------
 
