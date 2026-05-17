@@ -247,6 +247,32 @@ class ScoredPairing:
 
 
 @dataclass
+class LineScoringResult:
+    """
+    Aggregated result of scoring a single pilot×line combination over n_runs
+    independent LLM calls.
+
+    Stability thresholds (applied to score std across runs):
+      std < 5   → "stable"   — mean score used directly
+      5–10      → "marginal" — mean score used with a warning
+      > 10      → "unstable" — pairwise tiebreak used if adjacent scores overlap
+
+    When ranking_method is "pairwise_tiebreak", a head-to-head comparison was
+    run against an adjacent line and the result overrides the score ordering.
+    """
+    line:           Line
+    score_runs:     List[int]       # raw score from each run
+    score_mean:     float           # mean across runs
+    score_std:      float           # std across runs
+    stability:      str             # "stable", "marginal", or "unstable"
+    eligible:       bool
+    short_reason:   str
+    pros:           List[str]
+    cons:           List[str]
+    ranking_method: str = "score"   # "score" or "pairwise_tiebreak"
+
+
+@dataclass
 class EvalMetrics:
     spearman:     float
     top1_match:   bool
@@ -260,3 +286,147 @@ class AllocationResult:
     pairing:      Optional[Pairing]
     rank_awarded: int    # which rank choice the pilot got (1=first choice)
     bumped_by:    List[str] = field(default_factory=list)  # names of pilots who took higher choices
+    line:         Optional["Line"] = None  # set when operating in line-bidding mode
+
+
+# ---------------------------------------------------------------------------
+# Line (monthly schedule — group of pairings)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Line:
+    """
+    A pre-assembled monthly schedule consisting of pairings.
+    In real airline bidding the line — not the individual pairing — is the
+    atomic unit that pilots bid on.
+    """
+    id:       int
+    pairings: List[Pairing]  # ordered list; all pairings in this line
+
+    # ------------------------------------------------------------------
+    # Aggregate statistics
+    # ------------------------------------------------------------------
+
+    @property
+    def total_credit_hours(self) -> float:
+        """Sum of credit hours across all pairings."""
+        return round(sum(p.credit_hours for p in self.pairings), 1)
+
+    @property
+    def total_nights_away(self) -> int:
+        """Sum of hotel nights across all pairings."""
+        return sum(p.nights_away for p in self.pairings)
+
+    @property
+    def total_tafb(self) -> float:
+        """Sum of TAFB hours across all pairings."""
+        return round(sum(p.tafb for p in self.pairings), 1)
+
+    @property
+    def total_block_hours(self) -> float:
+        """Sum of block hours across all pairings."""
+        return round(sum(p.block_hours for p in self.pairings), 1)
+
+    @property
+    def total_per_diem(self) -> int:
+        """Sum of per-diem dollars across all pairings."""
+        return sum(p.per_diem for p in self.pairings)
+
+    @property
+    def aircraft_types(self) -> List[str]:
+        """Unique aircraft types used, in order of first appearance."""
+        seen: List[str] = []
+        for p in self.pairings:
+            if p.aircraft not in seen:
+                seen.append(p.aircraft)
+        return seen
+
+    @property
+    def start_days(self) -> List[str]:
+        """Start days of week for each pairing."""
+        return [p.start_dow for p in self.pairings]
+
+    @property
+    def cities(self) -> List[str]:
+        """All unique cities visited across all pairings."""
+        seen: List[str] = []
+        for p in self.pairings:
+            for c in p.cities:
+                if c not in seen:
+                    seen.append(c)
+        return seen
+
+    # ------------------------------------------------------------------
+    # Conflict detection
+    # ------------------------------------------------------------------
+
+    def _pairing_day_span(self, pairing: Pairing) -> tuple:
+        """
+        Estimate the calendar day range for a pairing within the month.
+
+        Convention: pairing with id=i starts at day (i-1)*6 + 1,
+        giving ~6-day spacing between consecutive pairings.
+        End day = start + nights_away + 1 (one report day + flying days).
+        """
+        start = (pairing.id - 1) * 6 + 1
+        end   = start + pairing.nights_away + 1
+        return start, end
+
+    def has_conflicts(self) -> bool:
+        """
+        True if any two pairings in this line overlap in calendar time.
+        Two pairings A and B overlap when A.start <= B.end AND B.start <= A.end.
+        """
+        spans = [self._pairing_day_span(p) for p in self.pairings]
+        for i in range(len(spans)):
+            for j in range(i + 1, len(spans)):
+                a_start, a_end = spans[i]
+                b_start, b_end = spans[j]
+                if a_start <= b_end and b_start <= a_end:
+                    return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Pilot-specific helpers
+    # ------------------------------------------------------------------
+
+    def total_pay_for_pilot(self, pilot: "Pilot") -> int:
+        """Sum of block pay (credit hours × base rate) across all pairings."""
+        return sum(p.pay_for_pilot(pilot.base_pay) for p in self.pairings)
+
+    def total_trip_value_for_pilot(self, pilot: "Pilot") -> int:
+        """Block pay + per diem across all pairings."""
+        return self.total_pay_for_pilot(pilot) + self.total_per_diem
+
+    def is_qualified(self, pilot: "Pilot") -> bool:
+        """True if the pilot is qualified for every aircraft type in this line."""
+        return all(p.is_qualified(pilot) for p in self.pairings)
+
+
+# ---------------------------------------------------------------------------
+# Ranked line (output of oracle line scoring)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RankedLine:
+    """Oracle ranking result for a single pilot–line combination."""
+    line:         Line
+    pilot:        Pilot
+    qualified:    bool
+    oracle_score: int
+    oracle_rank:  int = 0   # assigned after sorting
+
+
+# ---------------------------------------------------------------------------
+# LLM line response (parsed from JSON)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LLMLineRank:
+    """Parsed LLM response for a single line in oracle line-ranking mode."""
+    line_id:      int
+    rank:         int
+    eligible:     bool
+    short_reason: str
+    pros:         List[str]
+    cons:         List[str]

@@ -127,12 +127,38 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 .pw-stat{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 14px;text-align:center}
 .pw-stat-val{font-size:20px;font-weight:500;color:#2563eb}
 .pw-stat-lbl{font-size:10px;color:#888;font-family:monospace}
+
+/* Line cards */
+.line-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-bottom:1.5rem}
+.line-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:0;overflow:hidden;position:relative}
+.line-card.rank1{border-color:#16a34a}
+.line-card.inelig{opacity:0.55}
+.line-header{padding:14px 16px 10px;cursor:pointer;user-select:none}
+.line-header:hover{background:#f8fafc}
+.line-id{font-size:10px;color:#bbb;font-family:monospace;margin-bottom:3px}
+.line-title{font-size:14px;font-weight:500;color:#1a1a1a;margin-bottom:4px}
+.line-sub{font-size:11px;color:#888;font-family:monospace;line-height:1.7}
+.line-score{position:absolute;top:12px;right:14px;font-size:11px;font-family:monospace;color:#2563eb}
+.line-rank{position:absolute;bottom:8px;right:14px;font-size:22px;color:#e2e8f0;font-weight:500}
+.line-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:0 16px 10px}
+.line-ac-tags{padding:0 16px 8px;display:flex;gap:4px;flex-wrap:wrap}
+.line-pairings{border-top:1px solid #f1f5f9;padding:10px 16px;display:none;background:#f8fafc}
+.line-pairings.open{display:block}
+.line-pair-row{font-size:11px;font-family:monospace;color:#555;padding:2px 0;line-height:1.5}
+.line-pair-header{color:#1e293b;font-weight:600;border-top:1px solid #e2e8f0;padding-top:6px;margin-top:2px}
+.line-pair-header:first-child{border-top:none;padding-top:2px;margin-top:0}
+.line-pair-leg{padding-left:14px;color:#64748b}
+.line-pair-hotel{padding-left:14px;color:#94a3b8;font-style:italic}
+.line-toggle{font-size:10px;color:#2563eb;font-family:monospace;padding:4px 16px 10px;cursor:pointer}
+.line-toggle:hover{text-decoration:underline}
+.line-mode-badge{display:inline-block;font-size:10px;font-family:monospace;padding:3px 10px;border-radius:5px;background:#ede9fe;color:#6d28d9;margin-left:8px;vertical-align:middle}
+.conflict-badge{display:inline-block;font-size:10px;font-family:monospace;padding:2px 8px;border-radius:4px;background:#fef3c7;color:#92400e;margin-left:6px}
 </style>
 </head>
 <body>
 <div class="wrap">
 <h1>Pilot pairing bidding — POC</h1>
-<p class="tagline">// 3 pilots · 10 pairings · BOS base · 2 eval modes: A · oracle ranking · B · pairwise</p>
+<p class="tagline">// 3 pilots · 20 monthly lines (100 pairings) · BOS base · Oracle ground truth always from weights · LLM tests: compare all at once · pairwise · scoring</p>
 
 <div class="card" id="backendCard" style="background:#f8fafc;border-color:#e2e8f0;margin-bottom:1.5rem">
   <div class="card-title" style="color:#374151">Backend LLM proxy</div>
@@ -149,7 +175,7 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
 <div class="tabs" id="mainTabs">
   <button class="tab active" id="tab-btn-setup" onclick="switchTab('setup')">Scenario</button>
-  <button class="tab" id="tab-btn-mode" onclick="switchTab('mode')">Evaluation mode</button>
+  <button class="tab" id="tab-btn-mode" onclick="switchTab('mode')">LLM testing mode</button>
   <button class="tab" id="tab-btn-oracle" onclick="switchTab('oracle')">Oracle weights</button>
   <button class="tab" id="tab-btn-prompt" onclick="switchTab('prompt')" style="display:none">Prompts</button>
   <button class="tab" id="tab-btn-eval" onclick="switchTab('eval')">Evaluate</button>
@@ -159,11 +185,23 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
 <div class="panel active" id="tab-setup">
   <div class="card">
-    <div class="card-title">10 pilot profiles</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin-bottom:0" id="setupPilotsTitle">3 pilot profiles</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:11px;font-family:monospace;color:#888">Bidding unit:</span>
+        <button type="button" class="btn sm" id="lineModeBtn" onclick="toggleLineMode()" style="font-size:11px">Switch to pairing mode →</button>
+      </div>
+    </div>
     <div class="roster" id="setupRoster"></div>
   </div>
-  <div class="card-title" style="margin-bottom:8px">20 flight pairings — circular routes, variable legs &amp; days</div>
-  <div class="pairing-grid" id="setupPairings"></div>
+  <div id="setupPairingsSection" style="display:none">
+    <div class="card-title" id="setupPairingsTitle" style="margin-bottom:8px">10 flight pairings — circular routes, variable legs &amp; days</div>
+    <div class="pairing-grid" id="setupPairings"></div>
+  </div>
+  <div id="setupLinesSection">
+    <div class="card-title" style="margin-bottom:8px">20 monthly lines <span class="line-mode-badge">LINE MODE</span> — 5 pairings each · 100 pairings total</div>
+    <div class="line-grid" id="setupLines"></div>
+  </div>
   <div class="card" style="background:#f8fafc;border-color:#e2e8f0;margin-top:0.5rem">
     <div class="card-title">Pay calculation method</div>
     <div style="font-size:12px;color:#555;font-family:monospace;line-height:1.9">
@@ -175,39 +213,41 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
     </div>
   </div>
   <div class="btn-row">
-    <button class="btn primary" onclick="goNextFromSetup()">Choose evaluation mode →</button>
+    <button class="btn primary" onclick="goNextFromSetup()">Choose LLM testing mode →</button>
     <button class="btn" onclick="newPilots()">↺ New pilots</button>
-    <button class="btn" onclick="newPairings()">↺ New pairings</button>
+    <button class="btn" id="newPairingsBtn" onclick="newPairings()" style="display:none">↺ New pairings</button>
+    <button class="btn" id="newLinesBtn" onclick="newLines()">↺ New lines</button>
   </div>
 </div>
 
 <div class="panel" id="tab-mode">
   <div class="card">
-    <div class="card-title">Choose your evaluation approach</div>
+    <div class="card-title">Choose LLM testing mode</div>
     <p style="font-size:12px;color:#888;font-family:monospace;margin-bottom:1.25rem;line-height:1.8">
-      How do you want to test whether the LLM reasons like a pilot? Pick one mode to continue.
+      The weighted <strong>oracle</strong> (ground-truth rankings) always comes from sliders on the Oracle weights tab — it does not depend on which LLM test you pick.<br><br>
+      Here you choose how the LLM gets tested against that oracle: one prompt ranking everything at once, head-to-head comparison, or separate 0–100 scores per pairing.
     </p>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
 
-      <div class="card" style="cursor:pointer;transition:border-color 0.15s" id="modeCard-oracle" onclick="selectMode('oracle')">
-        <div style="font-size:13px;font-weight:500;color:#2563eb;margin-bottom:6px">A · Oracle ranking</div>
+      <div class="card" style="cursor:pointer;transition:border-color 0.15s" id="modeCard-rankall" onclick="selectMode('rankall')">
+        <div style="font-size:13px;font-weight:500;color:#2563eb;margin-bottom:6px">A · Compare all at once</div>
         <div style="font-size:11px;color:#555;font-family:monospace;line-height:1.8">
-          Define a weighted scoring formula for each pilot (the oracle). Ask the LLM to rank all 3 pairings. Score how closely the LLM agrees with the oracle.<br><br>
-          <span style="color:#888">Best for: comparing LLMs on the same scenario.</span>
+          One prompt asks the LLM to rank <em>every</em> pairing (or line). Compare that full ranking against the oracle from your weights.<br><br>
+          <span style="color:#888">Best for: one-shot comparison vs the oracle baseline.</span>
         </div>
-        <div style="margin-top:10px;font-size:10px;font-family:monospace;color:#bbb">Oracle weights tab → Prompts tab → Evaluate</div>
+        <div style="margin-top:10px;font-size:10px;font-family:monospace;color:#bbb">Oracle weights tab → Prompts tab → Evaluate (this mode)</div>
       </div>
       <div class="card" style="cursor:pointer;transition:border-color 0.15s" id="modeCard-pairwise" onclick="selectMode('pairwise')">
-        <div style="font-size:13px;font-weight:500;color:#16a34a;margin-bottom:6px">B · Pairwise comparison</div>
+        <div style="font-size:13px;font-weight:500;color:#16a34a;margin-bottom:6px">B · Pairwise</div>
         <div style="font-size:11px;color:#555;font-family:monospace;line-height:1.8">
-          Ask the LLM to pick the better of two pairings head-to-head for one pilot. Simpler prompt, lower noise. Run multiple pairs to build a picture.<br><br>
-          <span style="color:#888">Best for: quick signal on preference alignment, no oracle needed.</span>
+          The LLM picks the better of two pairings per call. Builds a ranking over many comparisons — still judged against the same oracle-derived ordering.<br><br>
+          <span style="color:#888">Best for: simpler prompts and lower pairwise noise vs one huge rank-all response.</span>
         </div>
         <div style="margin-top:10px;font-size:10px;font-family:monospace;color:#bbb">Requires: pick pilot + two pairings → copy prompt → paste response</div>
       </div>
 
       <div class="card" style="cursor:pointer;transition:border-color 0.15s" id="modeCard-scoring" onclick="selectMode('scoring')">
-        <div style="font-size:13px;font-weight:500;color:#9333ea;margin-bottom:6px">C · Independent scoring</div>
+        <div style="font-size:13px;font-weight:500;color:#9333ea;margin-bottom:6px">C · Scoring</div>
         <div style="font-size:11px;color:#555;font-family:monospace;line-height:1.8">
           Each pairing scored individually (0–100) for this pilot. Fully parallelisable — one API call per pairing. Scores are sorted to produce a ranking compared against the oracle.<br><br>
           <span style="color:#888">Best for: large pairing sets; avoids prompt-length degradation.</span>
@@ -223,7 +263,7 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 <div class="panel" id="tab-oracle">
   <p style="font-size:12px;color:#888;font-family:monospace;margin-bottom:1rem">
     Set preference weights for each pilot — these define the oracle's ground truth ranking. Click a pilot to edit. Rankings update live as you adjust sliders.
-    <br>When using <strong>Oracle mode</strong>, also visit the Prompts tab to generate and copy the LLM prompt for each pilot.
+    <br>When testing with <strong>Compare all at once</strong>, also visit the Prompts tab to generate and copy the LLM rank-all prompt for each pilot.
   </p>
   <div class="roster" id="oracleRoster"></div>
   <div id="oracleEditor" style="display:none">
@@ -233,8 +273,12 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
       <div id="weightSliders"></div>
       <div class="weight-total" id="weightTotal"></div>
     </div>
-    <div class="card-title" style="margin-bottom:8px">Oracle pairing ranking for this pilot</div>
+    <div class="card-title" style="margin-bottom:8px" id="oraclePairingsTitle">Oracle pairing ranking for this pilot</div>
     <div class="pairing-grid" id="oraclePairings"></div>
+    <div id="oracleLinesSection">
+      <div class="card-title" style="margin-bottom:8px">Oracle line ranking for this pilot <span class="line-mode-badge">LINE MODE</span></div>
+      <div class="line-grid" id="oracleLines"></div>
+    </div>
   </div>
   <div class="btn-row">
     <button class="btn primary" onclick="switchTab('prompt')">Build prompts →</button>
@@ -244,6 +288,9 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
 <div class="panel" id="tab-prompt">
   <div class="instr">1 · Click a pilot · 2 · Copy prompt · 3 · Paste into LLM · 4 · Tell LLM: <strong>"Reply only with raw JSON array, no markdown"</strong> · 5 · Go to Evaluate</div>
+  <div id="promptLineModeNote" style="display:none;font-size:11px;font-family:monospace;background:#ede9fe;border-radius:8px;padding:8px 14px;margin-bottom:10px;color:#5b21b6">
+    <strong>LINE MODE active</strong> — prompts now describe all 20 monthly lines. The JSON response should have one object per line (lineId, rank, eligible, shortReason, pros, cons).
+  </div>
   <div class="roster" id="promptRoster"></div>
   <div class="card" id="promptBox" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
@@ -262,8 +309,8 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
 <div class="panel" id="tab-eval">
 
-  <!-- MODE A: Oracle ranking -->
-  <div id="mode-oracle">
+  <!-- MODE A: Compare all at once (LLM ranks full list vs oracle weights) -->
+  <div id="mode-rankall">
     <div class="progress-wrap"><div class="progress-bar" id="evalBar" style="width:0%"></div></div>
     <div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:1rem" id="evalProgressLabel">0 / 3 pilots scored</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
@@ -353,24 +400,31 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
     <div id="pwLog" style="margin-top:1rem"></div>
   </div>
 
-  <!-- MODE C: Independent scoring -->
+  <!-- MODE C: Scoring -->
   <div id="mode-scoring" style="display:none">
 
     <!-- Pilot selector + controls -->
     <div class="card">
-      <div class="card-title">Independent scoring — one call per pairing</div>
-      <p style="font-size:12px;color:#555;font-family:monospace;line-height:1.8;margin-bottom:1rem">
+      <div class="card-title" id="scoringCardTitle">Scoring — one call per pairing</div>
+      <p style="font-size:12px;color:#555;font-family:monospace;line-height:1.8;margin-bottom:1rem" id="scoringCardDesc">
         Each pairing is scored 0–100 for the selected pilot in a separate LLM call.
-        A calibrated anchor derived from this pilot's weights anchors the scale.
-        Scores are sorted to produce a ranking, then compared against the oracle.
+        Scores are sorted to produce a ranking compared against the oracle.<br>
+        <span style="background:#eef2ff;border-radius:4px;padding:2px 6px"><strong>In line mode</strong></span>:
+        each complete monthly <em>line</em> is scored as a whole in one call —
+        <strong>1 call per line per pilot</strong> (e.g. 20 lines × 3 pilots = 60 calls).
+        The LLM evaluates the full monthly schedule holistically. Allocation uses these line scores directly.
       </p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem">
+        <button type="button" class="btn primary" id="runAllScoringBtn" onclick="runAllScoringPilotsBackend()">Run all pilots (scoring) with backend LLM →</button>
+        <button type="button" class="btn sm" id="stopScoringBtn" onclick="stopAutoRun()" style="display:none">■ Stop</button>
+        <span id="scoringAllStatus" style="font-size:11px;font-family:monospace;color:#888"></span>
+      </div>
       <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:1rem">
         <div>
           <div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:4px">Pilot</div>
           <select id="scoringPilot" style="font-family:monospace;font-size:12px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#fff"></select>
         </div>
         <button type="button" class="btn primary" id="runScoringBtn" onclick="runScoringMode()">Run scoring →</button>
-        <button type="button" class="btn sm" id="stopScoringBtn" onclick="stopAutoRun()" style="display:none">■ Stop</button>
       </div>
       <div style="font-size:11px;font-family:monospace;color:#888" id="scoringStatus"></div>
       <div class="progress-wrap" style="margin-top:8px">
@@ -386,7 +440,7 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
   <!-- Summary table — shown after any evaluation -->
   <div id="evalSummary" style="display:none;margin-top:1.5rem">
     <div class="card">
-      <div class="card-title">Evaluation summary — all pilots</div>
+      <div class="card-title">LLM evaluation summary — all pilots</div>
       <div id="evalSummaryContent"></div>
       <div class="btn-row" style="margin-top:1rem">
         <button class="btn primary" onclick="saveRun()">Save to log →</button>
@@ -398,12 +452,21 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
 <div class="panel" id="tab-alloc">
   <div class="card" style="background:#f8fafc;border-color:#e2e8f0;margin-bottom:1rem">
-    <div class="card-title">How allocation works</div>
-    <div style="font-size:12px;color:#555;font-family:monospace;line-height:1.9">
+    <div class="card-title" id="allocHowTitle">How allocation works</div>
+    <div id="allocHowTextPairing" style="font-size:12px;color:#555;font-family:monospace;line-height:1.9">
       Pilots bid in <strong>seniority order</strong> (#1 most senior, gets first pick). Each pilot is awarded their highest-ranked available pairing that they are qualified for.<br>
-      <strong>LLM-based:</strong> uses each pilot's actual LLM ranking as their preference input. Requires oracle mode evaluation to be completed for all pilots first.<br>
+      <strong>LLM-based:</strong> builds each pilot&apos;s preference list from Evaluate data — in order:<br>
+      <span style="color:#888">(1)</span> <em>Compare all at once</em> JSON if present;<br>
+      <span style="color:#888">(2)</span> else <em>Scoring</em> (sort 0&#8211;100 scores across all pairings);<br>
+      <span style="color:#888">(3)</span> else <em>Pairwise</em> (win-count ranking after a completed round-robin). Each pilot needs at least one complete source; if several exist for the same pilot, the numbered priority above chooses which is used.<br>
       <strong>Oracle-based:</strong> uses oracle weights to rank pairings per pilot. Always available as a baseline.<br>
       If both are run, a side-by-side comparison shows where outcomes differ.
+    </div>
+    <div id="allocHowTextLine" style="display:none;font-size:12px;color:#555;font-family:monospace;line-height:1.9">
+      <span class="line-mode-badge">LINE MODE</span> Pilots bid on complete monthly lines (not individual pairings).<br>
+      Pilots bid in <strong>seniority order</strong>. Each pilot is awarded their highest-ranked available line that they are qualified for (all pairings in the line must be within their aircraft qualification).<br>
+      <strong>LLM-based:</strong> use either <em>Compare all at once</em> (line JSON) per pilot on the Evaluate tab, or run <em>Scoring</em> while still in line mode (scores every pairing that appears on the lines — allocation ranks lines by the sum of those pairing scores).<br>
+      <strong>Oracle-based:</strong> uses oracle weights applied to monthly statistics (total TAFB, nights away, pay, etc.).
     </div>
   </div>
   <div class="btn-row">
@@ -548,14 +611,17 @@ function fmtDuration(mins){
 }
 
 function blockMins(dist,spd){
-  // block time in minutes: flight time + taxi (15 min each end)
-  return Math.round(dist/spd*60)+30;
+  // block time in minutes: flight time + 30 min taxi/buffer, rounded to nearest 5 min
+  var raw = Math.round(dist/spd*60)+30;
+  return Math.round(raw/5)*5;
 }
 
 /* ══════════════════════════════════════════
    STATE
 ══════════════════════════════════════════ */
 let pilots=[], pairings=[], activePilot={oracle:0,prompt:0,eval:0}, log=[];
+let lineMode=true, lines=[], linePairings=[];
+const N_LINES=20, PAIRINGS_PER_LINE=5;
 
 const W_KEYS=['tafb','hotelNights','reportTime','aircraft','creditPay'];
 const W_LABELS={tafb:'TAFB (time away)',hotelNights:'Hotel nights away',reportTime:'Report / wake-up time',aircraft:'Aircraft type',creditPay:'Credit pay'};
@@ -630,7 +696,9 @@ function buildPairings(useCurrentSeed){
     const HOTEL_GROUND = 600; // ~10h rest overnight
 
     const legs = [];
-    let curMinutes = seededRand(5,13)*60 + seededPick([0,15,30,45]); // first dep: 5am-1pm
+    // First departure: morning bank 6:00–9:30 AM (55%) or afternoon bank 2:00–6:00 PM (45%)
+    let firstMins = seededRand(0,99)<55 ? seededRand(360,570) : seededRand(840,1080);
+    let curMinutes = Math.round(firstMins/5)*5; // snap to 5-min slot
     let curDay = 1;
 
     for(let l=0; l<numLegs; l++){
@@ -639,14 +707,12 @@ function buildPairings(useCurrentSeed){
       const dist = getDist(depCode, arrCode);
       const block = blockMins(dist, aircraft.spd);
       const depMins = curMinutes;
-      const arrMins = curMinutes + block;
+      const arrMinsRaw = curMinutes + block;
       const depDay = curDay;
 
       // Does arrival cross midnight?
-      let arrDay = curDay;
-      let arrMinNorm = arrMins;
-      if(arrMins >= 1440){ arrMinNorm = arrMins - 1440; arrDay = curDay + 1; }
-      if(arrMins >= 2880){ arrMinNorm = arrMins - 2880; arrDay = curDay + 2; }
+      const arrDay = curDay + Math.floor(arrMinsRaw/1440);
+      const arrMinNorm = arrMinsRaw % 1440;
 
       legs.push({
         dep: depCode,
@@ -663,12 +729,13 @@ function buildPairings(useCurrentSeed){
       if(l < numLegs-1){
         const isOvernightLeg = l < nightsAway; // first N-1 legs have overnight rest
         if(isOvernightLeg){
-          // Overnight: next dep is morning of next day
+          // Hotel departure: 6:00–8:30 AM in 5-min slots
           curDay++;
-          curMinutes = seededRand(5,10)*60 + seededPick([0,15,30]); // 5am-10am next day
+          curMinutes = Math.round(seededRand(360,510)/5)*5;
         } else {
-          // Same-day turnaround
-          curMinutes = (arrMins % 1440) + seededRand(MIN_GROUND, 150);
+          // Same-day turnaround: aircraft-specific ground time in 5-min slots
+          const turnMin = aircraft.type==='B767' ? seededRand(75,120) : seededRand(50,90);
+          curMinutes = arrMinsRaw + Math.round(turnMin/5)*5;
         }
       }
     }
@@ -753,14 +820,13 @@ function oracleScorePairing(pilot, pair){
   );
 }
 
-function oracleRankPilot(pilot){
-  const scored = pairings.map(pair=>({
+function oracleRankPairings(pilot, plist){
+  const scored = plist.map(pair=>({
     ...pair,
     eligible:  true,
     qualified: pilot.qualifiedTypes.includes(pair.aircraft),
-    oScore:    oracleScorePairing(pilot, pair), // returns 0 if not qualified
+    oScore:    oracleScorePairing(pilot, pair),
   }));
-  // Sort: qualified pairings by score desc, unqualified always last
   scored.sort((a,b)=>{
     if(a.qualified && !b.qualified) return -1;
     if(!a.qualified && b.qualified) return 1;
@@ -768,6 +834,10 @@ function oracleRankPilot(pilot){
   });
   scored.forEach((p,i)=>p.oRank=i+1);
   return scored;
+}
+
+function oracleRankPilot(pilot){
+  return oracleRankPairings(pilot, pairings);
 }
 
 /* ══════════════════════════════════════════
@@ -880,6 +950,7 @@ function selectOraclePilot(id){
   const ranked=oracleRankPilot(p);
   document.getElementById('oraclePairings').innerHTML=ranked.map(pair=>pairingCard(pair,true)).join('');
   renderRoster('oracleRoster','selectOraclePilot',id);
+  renderOracleLines();
 }
 function renderWeightSliders(p){
   document.getElementById('weightSliders').innerHTML=W_KEYS.map(k=>`
@@ -907,14 +978,18 @@ function updateWeightTotal(p){
 /* ══════════════════════════════════════════
    TAB 3 — PROMPTS
 ══════════════════════════════════════════ */
-function renderPromptTab(){renderRoster('promptRoster','selectPromptPilot',activePilot.prompt);selectPromptPilot(activePilot.prompt);}
 function selectPromptPilot(id){
   activePilot.prompt=id;
   const p=pilots[id];
   document.getElementById('promptBox').style.display='block';
-  document.getElementById('promptPilotLabel').textContent=`Capt. ${p.name} — Age ${p.age} — ${p.family}`;
-  document.getElementById('promptText').textContent=buildPrompt(p);
+  document.getElementById('promptPilotLabel').textContent='Capt. '+p.name+' \u2014 Age '+p.age+' \u2014 '+p.family+(lineMode?' \u2014 LINE MODE':'');
+  document.getElementById('promptText').textContent=lineMode ? buildLinePrompt(p) : buildPrompt(p);
+  document.getElementById('promptLineModeNote').style.display=lineMode?'':'none';
   renderRoster('promptRoster','selectPromptPilot',id);
+}
+function renderPromptTab(){
+  renderRoster('promptRoster','selectPromptPilot',activePilot.prompt);
+  selectPromptPilot(activePilot.prompt);
 }
 function buildPrompt(p){
   const pairingBlock = pairings.map(pair=>{
@@ -996,26 +1071,105 @@ Reply ONLY with a raw JSON array — no explanation, no markdown, no code fences
 ]`;
 }
 function copyPrompt(){
-  copyText(buildPrompt(pilots[activePilot.prompt]), document.getElementById('copyOk'));
+  var p=pilots[activePilot.prompt];
+  var txt=lineMode ? buildLinePrompt(p) : buildPrompt(p);
+  copyText(txt, document.getElementById('copyOk'));
+}
+
+function buildLinePrompt(p){
+  var hasKids=p.family.indexOf('child')>=0||p.family.indexOf('kids')>=0||p.family.indexOf('parent')>=0;
+  var isMid=p.age>=35&&p.age<50&&!hasKids;
+  var w=p.weights;
+  var W=function(k){ return w[k]+'%'; };
+  var pilotProfile='Name: Capt. '+p.name+'\nAge: '+p.age+'\nFamily status: '+p.family
+    +'\nHome base: '+p.homeBase+'\nAircraft qualifications: '+p.qualifiedTypes.join(', ')
+    +'\nPreferred aircraft: '+p.preferredType+'\nBase pay rate: $'+p.basePay+'/hr\nSeniority: #'+p.seniority;
+  var priority;
+  if(hasKids){
+    priority='This pilot has family obligations. They strongly prefer:\n'
+    +'  1. Shorter total TAFB across the month (less time away from home)\n'
+    +'  2. Fewer total hotel nights away (target: 8-10 nights/month)\n'
+    +'  3. Later report times (after 08:00) to manage school runs\n'
+    +'  4. Preferred aircraft type: '+p.preferredType+'\n'
+    +'  5. Monthly pay >$'+Math.round(p.basePay*75).toLocaleString()+' ('+p.creditPay+'% weight on pay)';
+  } else if(isMid){
+    priority='This pilot is mid-career and values work-life balance.\n'
+    +'  1. Moderate nights away (10-14 nights/month)\n'
+    +'  2. Preferred aircraft: '+p.preferredType+'\n'
+    +'  3. Good monthly pay\n  4. Reasonable report times\n  5. Varied routes';
+  } else {
+    priority='This pilot is senior/maximising earnings.\n'
+    +'  1. Maximum monthly credit pay ('+W('creditPay')+' weight)\n'
+    +'  2. Preferred aircraft: '+p.preferredType+'\n'
+    +'  3. Interesting international routes\n  4. Report times and nights away matter less';
+  }
+  var lineBlocks=lines.map(function(ln){
+    var qualified=lineQualified(p,ln);
+    var conflicts=lineHasConflicts(ln);
+    var acTypes=lineAircraftTypes(ln).join('+');
+    var pay=linePayForPilot(p,ln);
+    var perDiem=lineTotalPerDiem(ln);
+    var header='LINE '+ln.id+' — monthly schedule'
+      +'\n  Aircraft types: '+acTypes
+      +'\n  Qualified for all: '+(qualified?'YES — pilot can fly all pairings':'NO — pilot not qualified for one or more pairings')
+      +'\n  Scheduling conflicts: '+(conflicts?'WARNING: overlapping dates detected':'none')
+      +'\n  Total TAFB: '+lineTotalTafb(ln)+'h'
+      +'\n  Total nights away: '+lineTotalNightsAway(ln)
+      +'\n  Total credit hours: '+lineTotalCreditHours(ln)+'h'
+      +'\n  Total block pay: $'+pay.toLocaleString()+' ('+lineTotalCreditHours(ln)+'h \u00d7 $'+p.basePay+'/hr)'
+      +'\n  Total per diem: $'+perDiem.toLocaleString()
+      +'\n  Total monthly value: $'+(pay+perDiem).toLocaleString();
+    var pairRows=ln.pairings.map(function(pair){
+      var repStr=fmtTime(((pair.reportTimeMins%1440)+1440)%1440);
+      var hdr='  P'+pair.id+': '+pair.aircraft+' \u00b7 '+pair.nightsAway+'N \u00b7 starts '+pair.startDow
+        +' \u00b7 report '+repStr+' \u00b7 TAFB '+pair.tafb+'h \u00b7 '+pair.creditHours+'h cr';
+      var legStrs=pair.legs.map(function(l){
+        var arrNote=l.arrDay>l.depDay?' (+' + (l.arrDay-l.depDay)+'d)':'';
+        return '    Day'+l.depDay+' '+fmtTime(l.depMins)+' '+(l.from||l.dep)+'\u2192'+(l.to||l.arr)
+          +' arr '+fmtTime(l.arrMins)+arrNote+' ('+(l.blockMins/60).toFixed(1)+'h)';
+      }).join('\n');
+      return hdr+'\n'+legStrs;
+    }).join('\n');
+    return header+'\n  Constituent pairings:\n'+pairRows;
+  }).join('\n\n'+('=').repeat(50)+'\n\n');
+  var n=lines.length;
+  return 'You are simulating a commercial airline pilot choosing their monthly schedule.\n\n'
+    +'Each option below is a COMPLETE MONTHLY LINE OF FLYING — a pre-assembled schedule\n'
+    +'of multiple pairings representing the pilot\'s entire month.\n'
+    +'The pilot bids on lines, NOT individual pairings.\n\n'
+    +'== PILOT PROFILE ==\n'+pilotProfile+'\n\n'
+    +'== HOW THIS PILOT PRIORITISES ==\n'+priority+'\n\n'
+    +'== AIRCRAFT QUALIFICATION — HARD CONSTRAINT ==\n'
+    +'This pilot is qualified for: '+p.qualifiedTypes.join(', ')+'.\n'
+    +'Any line containing an unqualified aircraft type CANNOT be bid — mark eligible: false and rank last.\n\n'
+    +'== AVAILABLE MONTHLY LINES ==\n'
+    +lineBlocks+'\n\n'
+    +'== TASK ==\n'
+    +'Rank all '+n+' monthly lines from best (#1) to worst (#'+n+') for THIS pilot only.\n'
+    +'Reply ONLY with a raw JSON array — no explanation, no markdown, no code fences.\n\n'
+    +'[\n'
+    +'  {\n'
+    +'    "lineId": <number>,\n'
+    +'    "rank": <1=best>,\n'
+    +'    "eligible": <true if pilot qualifies for ALL pairings in this line>,\n'
+    +'    "shortReason": "<max 30 words>",\n'
+    +'    "pros": ["<pro 1>", "<pro 2>"],\n'
+    +'    "cons": ["<con 1>", "<con 2>"]\n'
+    +'  }\n'
+    +']';
 }
 
 /* ══════════════════════════════════════════
-   TAB 4 — EVALUATE  (3 modes)
+   TAB 4 — EVALUATE  (rank-all · pairwise · scoring)
 ══════════════════════════════════════════ */
-let evalMode = 'oracle';
+let evalMode = 'rankall';
 let pwComparisons = []; // log of pairwise results
 let sensPrompts = {}; // {original, modified, factor, pairingId}
-
-const MODE_DESC = {
-  oracle:   "Classic oracle ranking: LLM ranks all pairings for a pilot. Scored against the weighted oracle. Good for comparing LLMs on the same scenario.",
-  pairwise: "Pairwise comparison: LLM picks the better of two pairings head-to-head for one pilot. Simpler prompt, lower noise. Run multiple pairs to build a picture of preference alignment.",
-  scoring:  "Independent scoring: each pairing scored 0–100 in a separate LLM call using a pilot-specific anchor. Fully parallelisable — avoids prompt-length degradation at scale."
-};
 
 function setEvalMode(mode){
   evalMode = mode;
   selectedMode = mode;
-  ['oracle','sensitivity','pairwise','scoring'].forEach(m=>{
+  ['rankall','pairwise','scoring'].forEach(m=>{
     const el = document.getElementById('mode-'+m);
     if(el) el.style.display = m===mode ? 'block' : 'none';
   });
@@ -1031,6 +1185,111 @@ function renderEvalTab(){
   populatePwSelects();
 }
 
+/* ── Lenient JSON parsing for LLM replies (fences, trailing commas, prose around JSON) ── */
+function stripTrailingCommasLoose(text){
+  var out = text, prev;
+  do{
+    prev = out;
+    out = out.replace(/,(\s*[}\]])/g, '$1');
+  }while(out !== prev);
+  return out;
+}
+
+/** Extract balanced slice starting at openCh; ignores brackets inside quoted strings. */
+function sliceBalanced(text, startIdx, openCh, closeCh){
+  if(startIdx < 0 || startIdx >= text.length || text.charAt(startIdx) !== openCh) return null;
+  var depth = 0;
+  var inStr = false;
+  var esc = false;
+  var q = '';
+
+  for(var i = startIdx; i < text.length; i++){
+    var c = text.charAt(i);
+
+    if(inStr){
+      if(q === '"' || q === "'"){
+        if(esc){ esc = false; continue; }
+        if(c === '\\'){ esc = true; continue; }
+        if(c === q){ inStr = false; q = ''; }
+      }
+      continue;
+    }
+
+    if(c === '"' || c === "'"){
+      inStr = true;
+      q = c;
+      continue;
+    }
+
+    if(c === openCh) depth++;
+    else if(c === closeCh){
+      depth--;
+      if(depth === 0) return text.slice(startIdx, i + 1);
+    }
+  }
+  return null;
+}
+
+function normalizeLlmJsonRaw(raw){
+  if(raw == null) return '';
+  var t = String(raw).trim().replace(/^\uFEFF/, '');
+  t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/m, '').trim();
+  t = t.replace(/```json\s*/gi, '').replace(/\s*```\s*/g, '').trim();
+  return t;
+}
+
+function parseLlmJson(raw){
+  var t = normalizeLlmJsonRaw(raw);
+  if(!t) return null;
+
+  function tryParse(s){
+    if(!s) return null;
+    try{ return JSON.parse(s); }catch(_){}
+    try{ return JSON.parse(stripTrailingCommasLoose(s)); }catch(__){}
+    return null;
+  }
+
+  var direct = tryParse(t);
+  if(direct !== null && direct !== undefined) return direct;
+
+  var ai = t.indexOf('[');
+  var oi = t.indexOf('{');
+  var preferArr = ai >= 0 && (oi < 0 || ai < oi);
+
+  if(preferArr){
+    var slab = sliceBalanced(t, ai, '[', ']');
+    if(slab){
+      var v = tryParse(slab);
+      if(v !== null && v !== undefined) return v;
+    }
+  }
+  if(oi >= 0){
+    var slo = sliceBalanced(t, oi, '{', '}');
+    if(slo){
+      var vo = tryParse(slo);
+      if(vo !== null && vo !== undefined) return vo;
+    }
+  }
+  if(!preferArr && ai >= 0){
+    var slab2 = sliceBalanced(t, ai, '[', ']');
+    if(slab2){
+      var v2 = tryParse(slab2);
+      if(v2 !== null && v2 !== undefined) return v2;
+    }
+  }
+  return null;
+}
+
+function parseLlmJsonArray(raw){
+  var v = parseLlmJson(raw);
+  return Array.isArray(v) ? v : null;
+}
+
+function parseLlmJsonObject(raw){
+  var v = parseLlmJson(raw);
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
 /* ── MODE A helpers ── */
 function selectEvalPilot(id){
   activePilot.eval=id;
@@ -1040,7 +1299,10 @@ function selectEvalPilot(id){
   document.getElementById('llmPaste').value=p.llmResult?JSON.stringify(p.llmResult,null,2):'';
   document.getElementById('evalErr').textContent='';
   document.getElementById('evalResult').innerHTML='';
-  if(p.evalScore!==null) renderEvalResult(p);
+  if(p.evalScore!==null){
+    if(lineMode && _lineLLMRankings[p.id]) renderLineModeEvalResult(p);
+    else renderEvalResult(p);
+  }
   renderRoster('evalRoster','selectEvalPilot',id);
 }
 function clearPwPaste(){ document.getElementById('pwPaste').value=''; document.getElementById('pwErr').textContent=''; }
@@ -1051,20 +1313,28 @@ function clearPaste(){
 }
 function updateEvalProgress(){
   const n=pilots.filter(p=>p.evalScore!==null).length;
-  document.getElementById('evalBar').style.width=(n/10*100)+'%';
+  document.getElementById('evalBar').style.width=(n/pilots.length*100)+'%';
   document.getElementById('evalProgressLabel').textContent=`${n} / ${pilots.length} pilots scored`;
 }
 function scoreCurrentPilot(){
   const raw=document.getElementById('llmPaste').value.trim();
   const errEl=document.getElementById('evalErr');errEl.textContent='';
   if(!raw){errEl.textContent='Paste the LLM JSON response first.';return;}
-  let llmResult;
-  try{
-    const clean=raw.replace(/```json|```/g,'').trim();
-    llmResult=JSON.parse(clean);
-    if(!Array.isArray(llmResult)) throw new Error('Expected JSON array');
-  } catch(e){errEl.textContent='Parse error: '+e.message;return;}
+  const llmResult = parseLlmJsonArray(raw);
+  if(llmResult===null){
+    errEl.textContent='Parse error: could not read a JSON array (trim prose outside [...], fix trailing commas, use double quotes).';
+    return;
+  }
   const p=pilots[activePilot.eval];
+  if(lineMode){
+    try{
+      scorePilotLineModeFromParsed(p, llmResult);
+      updateEvalProgress();
+      renderLineModeEvalResult(p);
+      renderRoster('evalRoster','selectEvalPilot',activePilot.eval);
+    }catch(e){ errEl.textContent='Eval error: '+e.message; }
+    return;
+  }
   p.llmResult=llmResult;
   const oracle=oracleRankPilot(p);
   const oMap={};oracle.forEach(pair=>oMap[pair.id]=pair);
@@ -1286,11 +1556,12 @@ JSON: [{"pairingId":<n>,"rank":<1=best, ${pairings.length}=worst>,"eligible":<bo
 
 function scoreSensitivity(){
   const errEl = document.getElementById('sensErr'); errEl.textContent='';
-  let rA, rB;
-  try{
-    rA = JSON.parse(document.getElementById('sensRespA').value.replace(/```json|```/g,'').trim());
-    rB = JSON.parse(document.getElementById('sensRespB').value.replace(/```json|```/g,'').trim());
-  } catch(e){ errEl.textContent='Parse error: '+e.message; return; }
+  let rA = parseLlmJsonArray(document.getElementById('sensRespA').value);
+  let rB = parseLlmJsonArray(document.getElementById('sensRespB').value);
+  if(!rA || !rB){
+    errEl.textContent='Parse error: expected each box to contain a JSON array (markdown fences / trailing commas tolerated).';
+    return;
+  }
 
   const pairingId = sensPrompts.pairingId;
   const factorLabel = document.getElementById('sensFactor').options[document.getElementById('sensFactor').selectedIndex].text;
@@ -1438,11 +1709,11 @@ function submitRRResponse(){
   const raw    = document.getElementById('pwPaste').value.trim();
   const errEl  = document.getElementById('pwErr'); errEl.textContent='';
   if(!raw){errEl.textContent='Paste the LLM response first.';return;}
-  let res;
+  let res = parseLlmJsonObject(raw);
+  if(!res){ errEl.textContent='Parse error: expected a JSON object with "winner" (markdown fences / trailing commas tolerated).'; return; }
   try{
-    res = JSON.parse(raw.replace(/```json|```/g,'').trim());
     if(!res.winner) throw new Error('Missing "winner" field');
-  } catch(e){errEl.textContent='Parse error: '+e.message;return;}
+  } catch(e){ errEl.textContent='Parse error: '+e.message;return; }
 
   const cur      = window._pwCurrent;
   const llmWin   = res.winner===1 ? cur.idA : cur.idB;
@@ -1605,67 +1876,146 @@ function renderEvalSummary(){
   document.getElementById('evalSummary').style.display = 'block';
   let html = '';
 
-  // ── Oracle mode: ranking comparison table ──
+  // ── Compare all at once / Line scoring: LLM vs oracle ranking table ──
   if(hasOracle){
     const scoredPilots = pilots.filter(p=>p.evalScore!==null);
 
-    html += '<div style="margin-bottom:1.5rem">';
-    html += '<div style="font-size:11px;color:#888;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Oracle mode — LLM vs oracle ranking per pilot</div>';
-    html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
-    html += '<table style="min-width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;white-space:nowrap">';
-    html += '<tr style="border-bottom:1px solid #e2e8f0">';
-    html += '<th style="text-align:left;padding:7px 10px;color:#888;font-weight:400;position:sticky;left:0;background:#fff;z-index:1">Pilot</th>';
-    pairings.forEach(p=>{
-      const route = p.legs.map(l=>l.dep).join('→')+'→'+p.legs[p.legs.length-1].arr;
-      html += '<th style="text-align:center;padding:7px 10px;color:#888;font-weight:400" colspan="2">P'+p.id+'<br><span style="font-size:10px;color:#bbb">'+route+'</span></th>';
-    });
-    html += '<th style="text-align:center;padding:7px 10px;color:#888;font-weight:400">ρ</th>';
-    html += '</tr>';
+    if(lineMode && lines.length){
+      // ── LINE MODE summary ──
+      html += '<div style="margin-bottom:1.5rem">';
+      html += '<div style="font-size:11px;color:#888;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Line scoring — LLM vs oracle line ranking per pilot</div>';
+      html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+      html += '<table style="min-width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;white-space:nowrap">';
+      html += '<tr style="border-bottom:1px solid #e2e8f0">';
+      html += '<th style="text-align:left;padding:7px 10px;color:#888;font-weight:400;position:sticky;left:0;background:#fff;z-index:1">Pilot</th>';
+      lines.forEach(function(ln){
+        var acTypes = lineAircraftTypes(ln).join('+');
+        html += '<th style="text-align:center;padding:7px 10px;color:#888;font-weight:400" colspan="2">Line&nbsp;'+ln.id+'<br><span style="font-size:10px;color:#bbb">'+acTypes+'&nbsp;·&nbsp;'+lineTotalCreditHours(ln)+'h</span></th>';
+      });
+      html += '<th style="text-align:center;padding:7px 10px;color:#888;font-weight:400">\u03c1</th>';
+      html += '</tr>';
 
-    // Sub-header: LLM / Oracle per pairing
-    html += '<tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">';
-    html += '<td style="padding:4px 10px;color:#bbb;font-size:10px;position:sticky;left:0;background:#f8fafc;z-index:1;border-right:1px solid #e2e8f0"></td>';
-    pairings.forEach(()=>{
-      html += '<td style="text-align:center;padding:4px 6px;color:#2563eb;font-size:10px">LLM</td>';
-      html += '<td style="text-align:center;padding:4px 6px;color:#16a34a;font-size:10px">Oracle</td>';
-    });
-    html += '<td></td></tr>';
+      html += '<tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">';
+      html += '<td style="padding:4px 10px;color:#bbb;font-size:10px;position:sticky;left:0;background:#f8fafc;z-index:1;border-right:1px solid #e2e8f0"></td>';
+      lines.forEach(function(){
+        html += '<td style="text-align:center;padding:4px 6px;color:#2563eb;font-size:10px">LLM</td>';
+        html += '<td style="text-align:center;padding:4px 6px;color:#16a34a;font-size:10px">Oracle</td>';
+      });
+      html += '<td></td></tr>';
 
-    scoredPilots.forEach(pilot=>{
-      const oracle    = oracleRankPilot(pilot);
-      const oMap      = {};
-      oracle.forEach(p=>oMap[p.id]=p);
-      const llmMap    = {};
-      if(pilot.llmResult) pilot.llmResult.forEach(r=>llmMap[r.pairingId]=r);
+      scoredPilots.forEach(function(pilot){
+        var oracleRanked = oracleRankLines(pilot, lines);
+        var oMap = {};
+        oracleRanked.forEach(function(r){ oMap[r.line.id] = r; });
 
-      html += '<tr style="border-bottom:1px solid #f1f5f9">';
-      html += '<td style="padding:8px 10px;color:#1a1a1a;font-weight:500;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid #e2e8f0">Capt. '+pilot.name+'<br><span style="font-size:10px;color:#888;font-weight:400">#'+pilot.seniority+' · '+pilot.family.split(',')[0]+'</span></td>';
+        // Prefer compare-all-at-once rankings, then line scores
+        var llmRankings = lineLlmRankingsForPilot(pilot) || [];
+        var llmMap = {};
+        llmRankings.forEach(function(r){ llmMap[r.lineId] = r; });
 
-      pairings.forEach(pair=>{
-        const llmRank = llmMap[pair.id]?.rank ?? '—';
-        const oraRank = oMap[pair.id]?.oRank ?? '—';
-        const match   = llmRank === oraRank;
-        const off     = typeof llmRank==='number' && typeof oraRank==='number' ? Math.abs(llmRank-oraRank) : null;
-        const eligible = pilot.seniority<=pair.minSenior && pilot.qualifiedTypes.includes(pair.aircraft);
-        const bgColor  = !eligible ? '#f8fafc' : off===0 ? '#f0fdf4' : off===1 ? '#fffbeb' : off>=2 ? '#fef2f2' : '';
-        html += '<td style="text-align:center;padding:8px 6px;background:'+bgColor+';color:'+(off===0?'#16a34a':off>=2?'#dc2626':'#d97706')+(eligible?'':';color:#bbb')+'">'+(eligible?llmRank:'—')+'</td>';
-        html += '<td style="text-align:center;padding:8px 6px;background:'+bgColor+';color:#16a34a;border-right:1px solid #f1f5f9">'+(eligible?oraRank:'—')+'</td>';
+        // Spearman rho
+        var rhoItems = [];
+        lines.forEach(function(ln, i){
+          var lr = llmMap[ln.id];
+          var or_ = oMap[ln.id];
+          if(lr && or_) rhoItems.push({llm: lr.rank, ora: or_.rank});
+        });
+        var rho = '\u2014';
+        if(rhoItems.length >= 2){
+          var n_  = rhoItems.length;
+          var lm_ = rhoItems.reduce(function(s,p){ return s+p.llm; },0)/n_;
+          var om_ = rhoItems.reduce(function(s,p){ return s+p.ora; },0)/n_;
+          var num_= rhoItems.reduce(function(s,p){ return s+(p.llm-lm_)*(p.ora-om_); },0);
+          var dl_ = Math.sqrt(rhoItems.reduce(function(s,p){ return s+Math.pow(p.llm-lm_,2); },0));
+          var do_ = Math.sqrt(rhoItems.reduce(function(s,p){ return s+Math.pow(p.ora-om_,2); },0));
+          if(dl_ && do_) rho = (num_/(dl_*do_)).toFixed(2);
+        }
+
+        html += '<tr style="border-bottom:1px solid #f1f5f9">';
+        html += '<td style="padding:8px 10px;color:#1a1a1a;font-weight:500;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid #e2e8f0">Capt. '+pilot.name+'<br><span style="font-size:10px;color:#888;font-weight:400">#'+pilot.seniority+' \u00b7 '+pilot.family.split(',')[0]+'</span></td>';
+
+        lines.forEach(function(ln){
+          var lr  = llmMap[ln.id];
+          var or_ = oMap[ln.id];
+          var llmRank = lr ? lr.rank : '\u2014';
+          var oraRank = or_ ? or_.rank : '\u2014';
+          var eligible = lr ? lr.eligible : (or_ ? or_.qualified : false);
+          var off = (typeof llmRank==='number' && typeof oraRank==='number') ? Math.abs(llmRank-oraRank) : null;
+          var bgColor = !eligible ? '#f8fafc' : off===0 ? '#f0fdf4' : off===1 ? '#fffbeb' : off>=2 ? '#fef2f2' : '';
+          var fgLlm = eligible ? (off===0?'#16a34a':off>=2?'#dc2626':'#d97706') : '#bbb';
+          html += '<td style="text-align:center;padding:8px 6px;background:'+bgColor+';color:'+fgLlm+'">'+llmRank+'</td>';
+          html += '<td style="text-align:center;padding:8px 6px;background:'+bgColor+';color:#16a34a;border-right:1px solid #f1f5f9">'+oraRank+'</td>';
+        });
+
+        html += '<td style="text-align:center;padding:8px 10px;font-weight:500;color:#2563eb">'+rho+'</td>';
+        html += '</tr>';
       });
 
-      html += '<td style="text-align:center;padding:8px 10px;font-weight:500;color:#2563eb">'+(pilot._metrics?.sp??'—')+'</td>';
-      html += '</tr>';
-    });
+      html += '</table></div>';
+      html += '<div style="display:flex;gap:12px;margin-top:8px;font-size:10px;font-family:monospace;color:#888">';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#f0fdf4;color:#16a34a">exact match</span>';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#fffbeb;color:#d97706">off by 1</span>';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#fef2f2;color:#dc2626">off by 2+</span>';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#f8fafc;color:#bbb">not qualified</span>';
+      html += '</div></div>';
 
-    // Legend
-    html += '</table>';
-    html += '</div>'; // end scroll wrapper
-    html += '<div style="display:flex;gap:12px;margin-top:8px;font-size:10px;font-family:monospace;color:#888">';
-    html += '<span style="padding:2px 8px;border-radius:3px;background:#f0fdf4;color:#16a34a">exact match</span>';
-    html += '<span style="padding:2px 8px;border-radius:3px;background:#fffbeb;color:#d97706">off by 1</span>';
-    html += '<span style="padding:2px 8px;border-radius:3px;background:#fef2f2;color:#dc2626">off by 2+</span>';
-    html += '<span style="padding:2px 8px;border-radius:3px;background:#f8fafc;color:#bbb">ineligible</span>';
-    html += '</div>';
-    html += '</div>';
+    } else {
+      // ── PAIRING MODE summary ──
+      html += '<div style="margin-bottom:1.5rem">';
+      html += '<div style="font-size:11px;color:#888;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Compare all at once — LLM vs oracle ranking per pilot</div>';
+      html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+      html += '<table style="min-width:100%;border-collapse:collapse;font-size:12px;font-family:monospace;white-space:nowrap">';
+      html += '<tr style="border-bottom:1px solid #e2e8f0">';
+      html += '<th style="text-align:left;padding:7px 10px;color:#888;font-weight:400;position:sticky;left:0;background:#fff;z-index:1">Pilot</th>';
+      pairings.forEach(p=>{
+        const route = p.legs.map(l=>l.dep).join('→')+'→'+p.legs[p.legs.length-1].arr;
+        html += '<th style="text-align:center;padding:7px 10px;color:#888;font-weight:400" colspan="2">P'+p.id+'<br><span style="font-size:10px;color:#bbb">'+route+'</span></th>';
+      });
+      html += '<th style="text-align:center;padding:7px 10px;color:#888;font-weight:400">ρ</th>';
+      html += '</tr>';
+
+      html += '<tr style="border-bottom:1px solid #f1f5f9;background:#f8fafc">';
+      html += '<td style="padding:4px 10px;color:#bbb;font-size:10px;position:sticky;left:0;background:#f8fafc;z-index:1;border-right:1px solid #e2e8f0"></td>';
+      pairings.forEach(()=>{
+        html += '<td style="text-align:center;padding:4px 6px;color:#2563eb;font-size:10px">LLM</td>';
+        html += '<td style="text-align:center;padding:4px 6px;color:#16a34a;font-size:10px">Oracle</td>';
+      });
+      html += '<td></td></tr>';
+
+      scoredPilots.forEach(pilot=>{
+        const oracle    = oracleRankPilot(pilot);
+        const oMap      = {};
+        oracle.forEach(p=>oMap[p.id]=p);
+        const llmMap    = {};
+        if(pilot.llmResult) pilot.llmResult.forEach(r=>llmMap[r.pairingId]=r);
+
+        html += '<tr style="border-bottom:1px solid #f1f5f9">';
+        html += '<td style="padding:8px 10px;color:#1a1a1a;font-weight:500;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid #e2e8f0">Capt. '+pilot.name+'<br><span style="font-size:10px;color:#888;font-weight:400">#'+pilot.seniority+' · '+pilot.family.split(',')[0]+'</span></td>';
+
+        pairings.forEach(pair=>{
+          const llmRank = llmMap[pair.id]?.rank ?? '—';
+          const oraRank = oMap[pair.id]?.oRank ?? '—';
+          const off     = typeof llmRank==='number' && typeof oraRank==='number' ? Math.abs(llmRank-oraRank) : null;
+          const eligible = pilot.seniority<=pair.minSenior && pilot.qualifiedTypes.includes(pair.aircraft);
+          const bgColor  = !eligible ? '#f8fafc' : off===0 ? '#f0fdf4' : off===1 ? '#fffbeb' : off>=2 ? '#fef2f2' : '';
+          html += '<td style="text-align:center;padding:8px 6px;background:'+bgColor+';color:'+(off===0?'#16a34a':off>=2?'#dc2626':'#d97706')+(eligible?'':';color:#bbb')+'">'+(eligible?llmRank:'—')+'</td>';
+          html += '<td style="text-align:center;padding:8px 6px;background:'+bgColor+';color:#16a34a;border-right:1px solid #f1f5f9">'+(eligible?oraRank:'—')+'</td>';
+        });
+
+        html += '<td style="text-align:center;padding:8px 10px;font-weight:500;color:#2563eb">'+(pilot._metrics?.sp??'—')+'</td>';
+        html += '</tr>';
+      });
+
+      html += '</table>';
+      html += '</div>';
+      html += '<div style="display:flex;gap:12px;margin-top:8px;font-size:10px;font-family:monospace;color:#888">';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#f0fdf4;color:#16a34a">exact match</span>';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#fffbeb;color:#d97706">off by 1</span>';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#fef2f2;color:#dc2626">off by 2+</span>';
+      html += '<span style="padding:2px 8px;border-radius:3px;background:#f8fafc;color:#bbb">ineligible</span>';
+      html += '</div>';
+      html += '</div>';
+    }
   }
 
   // ── Pairwise mode: round-robin summary per pilot ──
@@ -1678,7 +2028,7 @@ function renderEvalSummary(){
     });
 
     html += '<div style="margin-top:'+(hasOracle?'1.5rem':'0')+'">';
-    html += '<div style="font-size:11px;color:#888;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Pairwise mode — derived rankings per pilot</div>';
+    html += '<div style="font-size:11px;color:#888;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Pairwise — derived rankings vs oracle per pilot</div>';
 
     Object.entries(byPilot).forEach(([pilotName, results])=>{
       const pilot = pilots.find(p=>p.name===pilotName);
@@ -1766,30 +2116,109 @@ function renderEvalSummary(){
 /* ══════════════════════════════════════════
    TAB 5 — ALLOCATION
 ══════════════════════════════════════════ */
+
+/**
+ * Resolved LLM preference order for sequential allocation — first non-null wins:
+ *  Compare all at once → scoring (by score desc) → pairwise (win-count sort).
+ */
+function rankAllRankingListForPilot(pilot){
+  const rows=pilot.llmResult;
+  if(!rows||rows.length!==pairings.length)return null;
+  const sorted=[...rows].sort(function(a,b){ return a.rank-b.rank;});
+  const seen=new Set();
+  const ranked=sorted.map(function(r){
+    seen.add(r.pairingId);
+    var pair = pairings.find(function(q){ return q.id===r.pairingId; });
+    if(!pair)return null;
+    return Object.assign({}, pair, {
+      llmRank: r.rank,
+      qualified: pilot.qualifiedTypes.indexOf(pair.aircraft)>=0
+    });
+  }).filter(Boolean);
+  if(seen.size!==pairings.length||ranked.length!==pairings.length)return null;
+  return ranked;
+}
+
+function scoringRankingListForPilot(pilot){
+  var rows=_scoringByPilot[pilot.id];
+  if(!rows||rows.length!==pairings.length)return null;
+  var ids={};
+  rows.forEach(function(r){ ids[r.pairingId]=true; });
+  for(var pi=0; pi<pairings.length; pi++){
+    if(!ids[pairings[pi].id]) return null;
+  }
+  var sorted=rows.slice().sort(function(a,b){
+    if(b.score!==a.score) return b.score-a.score;
+    return a.pairingId-b.pairingId;
+  });
+  return sorted.map(function(row,i){
+    var pair=pairings.find(function(q){ return q.id===row.pairingId; });
+    if(!pair)return null;
+    return Object.assign({}, pair, {
+      llmRank: i+1,
+      qualified: pilot.qualifiedTypes.indexOf(pair.aircraft)>=0
+    });
+  }).filter(Boolean);
+}
+
+function pairwiseRankingListForPilot(pilot){
+  var st=_pwByPilot[pilot.id];
+  if(!st||!st.done||!st.rrResults||st.rrResults.length!==st.rrPairs.length)return null;
+  var llmWins={};
+  pairings.forEach(function(pa){ llmWins[pa.id]=0; });
+  st.rrResults.forEach(function(r){ llmWins[r.llmWinner]++; });
+  var ranked=[].concat(pairings).sort(function(a,b){
+    var d=llmWins[b.id]-llmWins[a.id];
+    return d!==0 ? d : a.id-b.id;
+  });
+  return ranked.map(function(pair,i){
+    return Object.assign({}, pair, {
+      llmRank: i+1,
+      qualified: pilot.qualifiedTypes.indexOf(pair.aircraft)>=0
+    });
+  });
+}
+
+/** @returns {{ranked:Array, source:string}|null} */
+function llmRankingListAndSourceForPilot(pilot){
+  var arr, src;
+  if((arr=rankAllRankingListForPilot(pilot)))return {ranked:arr, source:'Compare all at once'};
+  if((arr=scoringRankingListForPilot(pilot)))return {ranked:arr, source:'Scoring'};
+  if((arr=pairwiseRankingListForPilot(pilot)))return {ranked:arr, source:'Pairwise (win counts)'};
+  return null;
+}
+
 // Store last allocation results for comparison
 let _lastAlloc = {};
+/** @type { Record<number,string>|null } last LLM-allocation preference source labels per pilot id */
+let _lastAllocLlmSourceByPilot = null;
 
 function runAlloc(mode){
   mode = mode || 'oracle';
+  if(lineMode){ runLineAlloc(mode); return; }
   const ordered = [...pilots].sort((a,b)=>a.seniority-b.seniority);
+
+  _lastAllocLlmSourceByPilot=null;
 
   // Build ranked list per pilot for this mode
   const rankedByPilot = {};
   if(mode === 'llm'){
-    const missing = ordered.filter(p=>!p.llmResult||!p.llmResult.length);
+    const sources={};
+    const missing=[];
+    ordered.forEach(p=>{
+      const bundle=llmRankingListAndSourceForPilot(p);
+      if(bundle){
+        rankedByPilot[p.id]=bundle.ranked;
+        sources[p.id]=bundle.source;
+      } else {
+        missing.push(p);
+      }
+    });
     if(missing.length){
-      alert('LLM rankings missing for: '+missing.map(p=>'Capt. '+p.name).join(', ')+'\nComplete oracle mode evaluation first.');
+      alert('No usable LLM preference list for:\n'+missing.map(p=>'Capt. '+p.name).join(', ')+'\n\nEach pilot needs Evaluate data:\nCompare all at once (full JSON rankings), OR Scoring (all '+pairings.length+' pairings), OR Pairwise round-robin completed for that pilot.');
       return;
     }
-    ordered.forEach(p=>{
-      // Sort LLM result by rank, resolve ties by seniority (already in order)
-      const sorted = [...p.llmResult].sort((a,b)=>a.rank-b.rank);
-      // Map to pairing objects with qualified flag
-      rankedByPilot[p.id] = sorted.map(r=>{
-        const pair = pairings.find(q=>q.id===r.pairingId);
-        return pair ? {...pair, llmRank:r.rank, qualified:p.qualifiedTypes.includes(pair.aircraft)} : null;
-      }).filter(Boolean);
-    });
+    _lastAllocLlmSourceByPilot=sources;
   } else {
     ordered.forEach(p=>{ rankedByPilot[p.id]=oracleRankPilot(p); });
   }
@@ -1874,6 +2303,19 @@ function runAlloc(mode){
   });
   html += '</table></div>';
 
+  if(mode==='llm'&&_lastAllocLlmSourceByPilot){
+    html += '<div class="card" style="background:#fafafa;border-color:#e2e8f0;margin-top:0.75rem">';
+    html += '<div style="font-size:11px;color:#475569;font-family:monospace;line-height:1.85">';
+    html += '<strong>LLM ranking source used (per pilot):</strong><br>';
+    ordered.forEach(p=>{
+      html += '&middot;&nbsp;Capt.&nbsp;'+p.name+': '+( _lastAllocLlmSourceByPilot[p.id])+'<br>';
+    });
+    html += '<span style="color:#94a3b8;font-size:10px;display:inline-block;margin-top:6px">';
+    html += 'If several modes exist for the same pilot, priority is ';
+    html += '<em>Compare all at once</em> &rsaquo; <em>Scoring</em> &rsaquo; <em>Pairwise</em>.';
+    html += '</span></div></div>';
+  }
+
   // Tiebreak / bumped choices section
   if(tiebreaks.length){
     html += '<div class="card" style="border-color:#d97706;background:#fffbeb"><div class="card-title" style="color:#92400e">Preference conflicts resolved by seniority ('+tiebreaks.length+')</div>';
@@ -1923,6 +2365,152 @@ function runAlloc(mode){
   }
 
   document.getElementById('allocResult').innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+// Line allocation
+// ---------------------------------------------------------------------------
+
+/** When line-mode "Compare all at once" was not run, build line order from line-scoring results. */
+function deriveLineRankingsFromPilotScoring(pilot){
+  if(!lines || !lines.length) return null;
+  var lscored = _lineScoreByPilot[pilot.id];
+  if(lscored && lscored.length === lines.length){
+    // Direct line scores available — use them
+    var rows = lscored.slice().sort(function(a,b){
+      if(a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+      if(b.score !== a.score) return b.score - a.score;
+      return a.lineId - b.lineId;
+    });
+    return rows.map(function(r,i){
+      return {
+        lineId: r.lineId,
+        rank: i + 1,
+        eligible: r.eligible,
+        shortReason: r.shortReason || ('Score '+r.score)
+      };
+    });
+  }
+  return null;
+}
+
+function lineLlmRankingsForPilot(pilot){
+  var direct = _lineLLMRankings[pilot.id];
+  if(direct && direct.length) return direct;
+  var derived = deriveLineRankingsFromPilotScoring(pilot);
+  return derived && derived.length ? derived : null;
+}
+
+let _lastLineAlloc = {};
+
+function runLineAlloc(mode){
+  mode=mode||'oracle';
+  var ordered=[].concat(pilots).sort(function(a,b){ return a.seniority-b.seniority; });
+
+  // Build ranked lines per pilot
+  var rankedByPilot={};
+  if(mode==='llm'){
+    var missing=[];
+    ordered.forEach(function(p){
+      if(!lineLlmRankingsForPilot(p)) missing.push(p);
+    });
+    if(missing.length){
+      var nPool = lines.length ? getLinePoolPairingsUnique().length : pairings.length;
+      alert(
+        'LLM line rankings missing for: '+missing.map(function(p){ return 'Capt. '+p.name; }).join(', ')
+          +'\n\nEither:\n\u2022 Run Compare all at once (line mode) for each pilot in Evaluate, OR\n\u2022 Run Scoring in line mode (scores all '+nPool+' pairings on the monthly lines; re-run scoring if you regenerated lines).'
+      );
+      return;
+    }
+    ordered.forEach(function(p){
+      var sorted=[].concat(lineLlmRankingsForPilot(p)).sort(function(a,b){ return a.rank-b.rank; });
+      rankedByPilot[p.id]=sorted.map(function(r){
+        var ln=lines.find(function(l){ return l.id===r.lineId; });
+        return ln ? { line:ln, rank:r.rank, eligible:r.eligible } : null;
+      }).filter(Boolean);
+    });
+  } else {
+    ordered.forEach(function(p){
+      var ranked=oracleRankLines(p,lines);
+      rankedByPilot[p.id]=ranked.map(function(r){ return { line:r.line, rank:r.rank, eligible:r.qualified }; });
+    });
+  }
+
+  // Seniority-order sequential allocation
+  var awardedLine={};
+  var taken=new Set();
+  ordered.forEach(function(p){
+    var ranked=rankedByPilot[p.id];
+    for(var i=0;i<ranked.length;i++){
+      var item=ranked[i];
+      if(!item.eligible || !lineQualified(p,item.line)) continue;
+      if(!taken.has(item.line.id)){
+        awardedLine[p.id]={ line:item.line, rank:i+1 };
+        taken.add(item.line.id);
+        break;
+      }
+    }
+  });
+
+  _lastLineAlloc[mode]={ awardedLine:awardedLine, ordered:ordered };
+
+  var title=(mode==='llm'?'LLM-based':'Oracle-based')+' LINE allocation \u2014 seniority order bidding';
+  var bothAvail=_lastLineAlloc.llm&&_lastLineAlloc.oracle;
+  var html='<div class="card"><div class="card-title">'+title+'</div>';
+  html+='<div style="overflow-x:auto"><table class="alloc-table"><tr>'
+    +'<th>Seniority</th><th>Pilot</th><th>Quals</th><th>Awarded line</th><th>Credit</th><th>Nights</th><th>Rank choice</th>';
+  if(bothAvail) html+='<th>vs Oracle</th>';
+  html+='</tr>';
+
+  ordered.forEach(function(p){
+    var award=awardedLine[p.id];
+    var ln=award&&award.line;
+    var oraAward=bothAvail&&_lastLineAlloc.oracle&&_lastLineAlloc.oracle.awardedLine[p.id];
+    var match=oraAward&&ln&&oraAward.line.id===ln.id;
+    html+='<tr>';
+    html+='<td>#'+p.seniority+'</td>';
+    html+='<td>Capt. '+p.name+'</td>';
+    html+='<td style="font-size:10px">'+p.qualifiedTypes.join(', ')+'</td>';
+    if(ln){
+      var acTypes=lineAircraftTypes(ln).join('+');
+      html+='<td><strong>Line '+ln.id+'</strong> <span style="font-size:10px;color:#888">'+acTypes+'</span></td>';
+      html+='<td>'+lineTotalCreditHours(ln)+'h</td>';
+      html+='<td>'+lineTotalNightsAway(ln)+'</td>';
+      html+='<td>#'+award.rank+' choice</td>';
+    } else {
+      html+='<td colspan="3" style="color:#dc2626;font-size:11px">\u2014 no qualified line available</td>';
+    }
+    if(bothAvail){
+      html+='<td style="font-size:13px">'+(ln&&oraAward&&oraAward.line.id===ln.id?'\u2713 match':'\u2717 differ')+'</td>';
+    }
+    html+='</tr>';
+  });
+  html+='</table></div>';
+
+  if(bothAvail){
+    var matches=ordered.filter(function(p){
+      var la=_lastLineAlloc.llm.awardedLine[p.id];
+      var oa=_lastLineAlloc.oracle.awardedLine[p.id];
+      return la&&oa&&la.line.id===oa.line.id;
+    }).length;
+    html+='<div class="card" style="background:#f8fafc;border-color:#e2e8f0;margin-top:12px">';
+    html+='<div class="card-title">Line allocation comparison</div>';
+    html+='<div style="font-size:12px;font-family:monospace;color:#555;line-height:1.8">';
+    html+=matches+'/'+ordered.length+' pilots awarded the same line under LLM and oracle.<br>';
+    if(matches===ordered.length){
+      html+='<span style="color:#16a34a">\u2713 Perfect agreement \u2014 LLM rankings lead to the same monthly schedules as the oracle.</span>';
+    } else {
+      var diff=ordered.length-matches;
+      html+='<span style="color:#dc2626">\u2717 '+diff+' pilot'+(diff>1?'s':'')+' received different lines.</span> LLM ranking errors had real allocation consequences.';
+    }
+    html+='</div></div>';
+  }
+
+  html+='</div>';
+  document.getElementById('allocResult').innerHTML=html;
+  // Show/hide explanation text
+  document.getElementById('allocHowTextPairing').style.display='none';
+  document.getElementById('allocHowTextLine').style.display='';
 }
 
 /* ══════════════════════════════════════════
@@ -1977,7 +2565,7 @@ function showSaveModal(callback){
     overlay.innerHTML =
       '<div style="background:#fff;border-radius:12px;padding:1.5rem;max-width:400px;width:100%">' +
         '<div style="font-size:14px;font-weight:500;color:#1a1a1a;margin-bottom:10px">Nothing to save yet</div>' +
-        '<div style="font-size:12px;color:#888;font-family:monospace;margin-bottom:1rem">Complete at least one evaluation (oracle scoring or pairwise comparison) before saving.</div>' +
+        '<div style="font-size:12px;color:#888;font-family:monospace;margin-bottom:1rem">Complete at least one LLM evaluation (compare all at once, pairwise, or scoring) before saving.</div>' +
         '<button id="saveCloseBtn" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px 16px;font-size:12px;cursor:pointer;color:#555;font-family:monospace">Close</button>' +
       '</div>';
     document.body.appendChild(overlay);
@@ -2201,7 +2789,13 @@ function showExportModal(title, content, filename, type){
 /* ══════════════════════════════════════════
    NAVIGATION
 ══════════════════════════════════════════ */
-const TAB_FNS={oracle:renderOracleTab,prompt:renderPromptTab,eval:renderEvalTab,mode:renderModeTab};
+function renderAllocTab(){
+  var pt=document.getElementById('allocHowTextPairing');
+  var lt=document.getElementById('allocHowTextLine');
+  if(pt) pt.style.display=lineMode?'none':'';
+  if(lt) lt.style.display=lineMode?'':'none';
+}
+const TAB_FNS={oracle:renderOracleTab,prompt:renderPromptTab,eval:renderEvalTab,mode:renderModeTab,alloc:renderAllocTab};
 function switchTab(id){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   const btn = document.getElementById('tab-btn-'+id);
@@ -2213,8 +2807,8 @@ function switchTab(id){
 }
 
 function _resetEvalState(){
-  pilots.forEach(p=>{p.llmResult=null;p.evalScore=null;p._metrics=null;});
-  const safe = id=>{ const el=document.getElementById(id); if(el) return el; return {innerHTML:'',style:{}}; };
+  pilots.forEach(function(p){ p.llmResult=null; p.evalScore=null; p._metrics=null; p.lineEvalScore=null; p.lineEvalMetrics=null; });
+  var safe=function(id){ var el=document.getElementById(id); return el||{innerHTML:'',style:{}}; };
   safe('allocResult').innerHTML='';
   safe('evalResult').innerHTML='';
   safe('evalSummary').style.display='none';
@@ -2224,9 +2818,13 @@ function _resetEvalState(){
   rrResults=[]; rrStep=0; rrPairs=[];
   _pwByPilot={};
   _scoringByPilot={};
-  const rr=document.getElementById('rrStepper');
+  _lineScoreByPilot={};
+  _lineLLMRankings={};
+  _lastLineAlloc={};
+  _lastAlloc={};
+  _lastAllocLlmSourceByPilot=null;
   if(rr) rr.style.display='none';
-  const rc=document.getElementById('rrCard');
+  var rc=document.getElementById('rrCard');
   if(rc) rc.style.display='block';
 }
 
@@ -2253,10 +2851,348 @@ function goNextFromSetup(){
   switchTab('mode');
 }
 
+// ---------------------------------------------------------------------------
+// Line helpers — deterministic from pairingsSeed, reuses existing pairings
+// ---------------------------------------------------------------------------
+
+function buildLines(){
+  // Use a fresh 25-pairing set built from a derived seed
+  var lineSeed = (_seedQ ^ 0xBEEF) >>> 0;
+  var pool = [];
+  var b767count = 0;
+  var allPairings = _buildAllPairingsForLines(lineSeed, N_LINES*PAIRINGS_PER_LINE, Math.round(N_LINES*PAIRINGS_PER_LINE*0.32));
+
+  // Sort: B737 first, then B767
+  var b737Pool = allPairings.filter(function(p){ return p.aircraft==='B737'; });
+  var b767Pool = allPairings.filter(function(p){ return p.aircraft!=='B737'; });
+  var sorted = b737Pool.concat(b767Pool);
+
+  var result = [];
+  for(var i=0;i<N_LINES;i++){
+    var lp = sorted.slice(i*PAIRINGS_PER_LINE,(i+1)*PAIRINGS_PER_LINE);
+    result.push({ id:i+1, pairings:lp });
+  }
+  return result;
+}
+
+function getLinePoolPairingsUnique(){
+  if(!lines || !lines.length) return [];
+  var out=[];
+  var seen={};
+  for(var i=0;i<lines.length;i++){
+    var row=lines[i].pairings;
+    for(var j=0;j<row.length;j++){
+      var pid=row[j].id;
+      if(seen[pid]) continue;
+      seen[pid]=1;
+      out.push(row[j]);
+    }
+  }
+  return out;
+}
+
+function getScoringPairingList(){
+  if(lineMode && lines.length) return getLinePoolPairingsUnique();
+  return pairings;
+}
+
+function _buildAllPairingsForLines(seed, n, maxB767){
+  // Build n pairings using a separate seed, with max maxB767 B767 pairings.
+  // Uses real city-pair distances for block times and realistic departure scheduling.
+  var r=(function(s){
+    var state=s;
+    return function(){ state=(1664525*state+1013904223)&0xFFFFFFFF; return state>>>0; };
+  })(seed);
+  var ri=function(a,b){ return a+r()%(b-a+1); };
+  var pick=function(arr){ return arr[r()%arr.length]; };
+  var DOW=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  var HUBS=['BOS','JFK','ORD','ATL','DFW','LAX','SFO','MIA','SEA','DEN'];
+  var CITY_NAMES={
+    JFK:'New York',LAX:'Los Angeles',ORD:'Chicago',DFW:'Dallas',ATL:'Atlanta',
+    DEN:'Denver',SEA:'Seattle',BOS:'Boston',MIA:'Miami',PHX:'Phoenix',
+    MSP:'Minneapolis',DTW:'Detroit',LAS:'Las Vegas',MCO:'Orlando',SFO:'San Francisco',
+    CLT:'Charlotte',IAH:'Houston',SLC:'Salt Lake City',PDX:'Portland',BWI:'Baltimore'
+  };
+  var hubs=HUBS.filter(function(h){ return h!=='BOS'; });
+  var result=[];
+  var b767count=0;
+  var idBase=10000;
+  for(var i=0;i<n;i++){
+    var acType,acSpd,acLabel;
+    if(b767count>=maxB767){
+      acType='B737'; acSpd=480; acLabel='Boeing 737';
+    } else if(r()%3===0){
+      acType='B767'; acSpd=520; acLabel='Boeing 767'; b767count++;
+    } else {
+      acType='B737'; acSpd=480; acLabel='Boeing 737';
+    }
+    var dow=pick(DOW);
+    var numLegs=2+(r()%3);
+    var nightsAway=numLegs-1;
+    // Build route: BOS → stops → BOS
+    var route=['BOS'];
+    for(var s=0;s<numLegs-1;s++){ route.push(pick(hubs)); }
+    route.push('BOS');
+    // First departure: morning bank 6:00–9:30 AM (55%) or afternoon bank 2:00–6:00 PM (45%)
+    var firstMins=r()%100<55 ? ri(360,570) : ri(840,1080);
+    var curMins=Math.round(firstMins/5)*5;
+    var curDay=1;
+    var legs=[];
+    for(var l=0;l<numLegs;l++){
+      var fromCode=route[l], toCode=route[l+1];
+      var dist=(DIST[fromCode]&&DIST[fromCode][toCode])||800;
+      var blk=blockMins(dist,acSpd);
+      var depMins=curMins%1440;
+      var arrMinsRaw=curMins+blk;
+      var arrDay=curDay+Math.floor(arrMinsRaw/1440);
+      var arrMins=arrMinsRaw%1440;
+      legs.push({
+        from:fromCode, to:toCode,
+        depCity:CITY_NAMES[fromCode]||fromCode,
+        arrCity:CITY_NAMES[toCode]||toCode,
+        distance:dist, blockMins:blk,
+        depDay:curDay, depMins:depMins,
+        arrDay:arrDay, arrMins:arrMins
+      });
+      if(l<nightsAway){
+        curDay++;
+        curMins=Math.round(ri(360,510)/5)*5; // hotel dep 6:00–8:30 AM
+      } else {
+        var turn=acType==='B767'?ri(75,120):ri(50,90);
+        curMins=arrMinsRaw+Math.round(turn/5)*5;
+      }
+    }
+    // Derive aggregate stats from actual leg data
+    var firstAbs=legs[0].depDay*1440+legs[0].depMins;
+    var lastAbs=legs[legs.length-1].arrDay*1440+legs[legs.length-1].arrMins;
+    var tafb=Math.round((lastAbs-firstAbs)/60*10)/10;
+    var totalBlkMins=legs.reduce(function(s,lg){ return s+lg.blockMins; },0);
+    var blockHrs=Math.round(totalBlkMins/60*10)/10;
+    var creditHrs=Math.round(Math.max(blockHrs,Math.max(4.0,numLegs*0.5))*10)/10;
+    var perDiem=Math.round(tafb*2.5);
+    var reportTimeMins=legs[0].depMins-60;
+    var cities=route.slice(1,route.length-1).map(function(c){ return CITY_NAMES[c]||c; });
+    result.push({
+      id:idBase+i+1, aircraft:acType, aircraftLabel:acLabel, startDow:dow,
+      legs:legs, nightsAway:nightsAway, blockHours:blockHrs,
+      creditHours:creditHrs, tafb:tafb, perDiem:perDiem,
+      reportTimeMins:reportTimeMins, cities:cities
+    });
+  }
+  return result;
+}
+
+function lineQualified(pilot, line){
+  return line.pairings.every(function(p){ return pilot.qualifiedTypes.indexOf(p.aircraft)>=0; });
+}
+
+function lineHasConflicts(line){
+  var spans=line.pairings.map(function(p){
+    var start=(p.id-10000)*6+1;
+    return [start, start+p.nightsAway+1];
+  });
+  for(var i=0;i<spans.length;i++){
+    for(var j=i+1;j<spans.length;j++){
+      if(spans[i][0]<=spans[j][1] && spans[j][0]<=spans[i][1]) return true;
+    }
+  }
+  return false;
+}
+
+function lineTotalCreditHours(line){
+  return Math.round(line.pairings.reduce(function(s,p){ return s+p.creditHours; },0)*10)/10;
+}
+function lineTotalNightsAway(line){
+  return line.pairings.reduce(function(s,p){ return s+p.nightsAway; },0);
+}
+function lineTotalTafb(line){
+  return Math.round(line.pairings.reduce(function(s,p){ return s+p.tafb; },0)*10)/10;
+}
+function lineTotalPerDiem(line){
+  return line.pairings.reduce(function(s,p){ return s+p.perDiem; },0);
+}
+function lineAircraftTypes(line){
+  var seen=[];
+  line.pairings.forEach(function(p){ if(seen.indexOf(p.aircraft)<0) seen.push(p.aircraft); });
+  return seen;
+}
+function linePayForPilot(pilot, line){
+  return line.pairings.reduce(function(s,p){ return s+Math.round(p.creditHours*pilot.basePay); },0);
+}
+function lineTripValueForPilot(pilot, line){
+  return linePayForPilot(pilot,line)+lineTotalPerDiem(line);
+}
+
+// Oracle score a line for a pilot (mirrors Python oracle.oracle_score_line)
+function oracleScoreLine(pilot, line){
+  if(!lineQualified(pilot,line)) return 0;
+  var W=pilot.weights;
+  var tafb=lineTotalTafb(line);
+  var tafbS=Math.max(0,Math.min(100,Math.round((400-tafb)/(400-90)*100)));
+  var nights=lineTotalNightsAway(line);
+  var hotelS;
+  if(pilot.hasKids){
+    hotelS=Math.max(0,Math.round(100-Math.abs(nights-9)*15));
+  } else {
+    hotelS=nights<=14 ? Math.min(100,Math.round(nights*7)) : Math.max(0,Math.round(100-(nights-14)*20));
+  }
+  var repScore=function(mins){
+    var rm=((mins%1440)+1440)%1440;
+    return rm>=420?100:Math.max(0,Math.round((rm-240)/(420-240)*100));
+  };
+  var reportS=Math.round(line.pairings.reduce(function(s,p){ return s+repScore(p.reportTimeMins); },0)/line.pairings.length);
+  var prefCount=line.pairings.filter(function(p){ return p.aircraft===pilot.preferredType; }).length;
+  var acS=Math.round(prefCount/line.pairings.length*100);
+  var totalCr=lineTotalCreditHours(line);
+  var expected=85, floor=expected*0.85, range=expected*0.40;
+  var payS=Math.max(0,Math.min(100,Math.round((totalCr-floor)/range*100)));
+  var score=(tafbS*W.tafb+hotelS*W.hotelNights+reportS*W.reportTime+acS*W.aircraft+payS*W.creditPay)/100;
+  return Math.max(0,Math.min(100,Math.round(score)));
+}
+
+function oracleRankLines(pilot, lns){
+  var scored=lns.map(function(ln){
+    return { line:ln, qualified:lineQualified(pilot,ln), score:oracleScoreLine(pilot,ln) };
+  });
+  scored.sort(function(a,b){
+    if(a.qualified!==b.qualified) return a.qualified?-1:1;
+    if(b.score!==a.score) return b.score-a.score;
+    return a.line.id-b.line.id;
+  });
+  scored.forEach(function(r,i){ r.rank=i+1; });
+  return scored;
+}
+
+function toggleLineMode(){
+  lineMode=!lineMode;
+  var btn=document.getElementById('lineModeBtn');
+  var newLinesBtn=document.getElementById('newLinesBtn');
+  var newPairingsBtn=document.getElementById('newPairingsBtn');
+  var pairSection=document.getElementById('setupPairingsSection');
+  var lineSection=document.getElementById('setupLinesSection');
+  var oracleLinesSection=document.getElementById('oracleLinesSection');
+  if(lineMode){
+    btn.textContent='Switch to pairing mode \u2192';
+    newLinesBtn.style.display='';
+    newPairingsBtn.style.display='none';
+    pairSection.style.display='none';
+    lineSection.style.display='';
+    if(oracleLinesSection) oracleLinesSection.style.display='';
+    lines=buildLines();
+    renderSetupLines();
+    renderOracleLines();
+  } else {
+    btn.textContent='Switch to line mode \u2192';
+    newLinesBtn.style.display='none';
+    newPairingsBtn.style.display='';
+    pairSection.style.display='';
+    lineSection.style.display='none';
+    if(oracleLinesSection) oracleLinesSection.style.display='none';
+    lines=[];
+    renderOracleLines();
+  }
+  _resetEvalState();
+  _updateScoringCardTitle();
+}
+
+function newLines(){
+  _seedQ=(_lcg(_seedQ)+1)|0;
+  lines=buildLines();
+  renderSetupLines();
+  renderOracleLines();
+  _resetEvalState();
+}
+
+function _lineCardHtml(line, pilot, rank){
+  var qualified=lineQualified(pilot,line);
+  var conflicts=lineHasConflicts(line);
+  var acTypes=lineAircraftTypes(line).join('+');
+  var totalCr=lineTotalCreditHours(line);
+  var nights=lineTotalNightsAway(line);
+  var tafb=lineTotalTafb(line);
+  var perDiem=lineTotalPerDiem(line);
+  var pay=linePayForPilot(pilot,line);
+  var score=oracleScoreLine(pilot,line);
+  var cls='line-card'+(rank===1?' rank1':'')+(qualified?'':' inelig');
+  var conflictBadge=conflicts?'<span class="conflict-badge">\u26a0 conflict</span>':'';
+  var qualLabel=qualified
+    ?'<span style="color:#16a34a;font-size:10px">\u2713 qualified</span>'
+    :'<span style="color:#dc2626;font-size:10px">\u2717 not qualified</span>';
+  var cardId='lc-'+pilot.id+'-'+line.id;
+  var pairingRows='';
+  line.pairings.forEach(function(p){
+    var repStr=fmtTime(((p.reportTimeMins%1440)+1440)%1440);
+    pairingRows+='<div class="line-pair-row line-pair-header">'
+      +'P'+p.id+'&nbsp;\u00b7&nbsp;'+p.aircraft
+      +'&nbsp;\u00b7&nbsp;'+p.nightsAway+'N'
+      +'&nbsp;\u00b7&nbsp;'+p.startDow
+      +'&nbsp;\u00b7&nbsp;report&nbsp;'+repStr
+      +'&nbsp;\u00b7&nbsp;'+p.tafb+'h TAFB&nbsp;\u00b7&nbsp;'+p.creditHours+'h cr'
+      +'</div>';
+    p.legs.forEach(function(leg,li){
+      var arrNote=leg.arrDay>leg.depDay?' +'+( leg.arrDay-leg.depDay)+'d':'';
+      var blkH=(leg.blockMins/60).toFixed(1);
+      pairingRows+='<div class="line-pair-row line-pair-leg">'
+        +'Day'+leg.depDay+'&nbsp;'+fmtTime(leg.depMins)
+        +'&nbsp;'+leg.from+'\u2192'+leg.to
+        +'&nbsp;arr&nbsp;'+fmtTime(leg.arrMins)+arrNote
+        +'&nbsp;('+blkH+'h)</div>';
+      if(li<p.legs.length-1 && p.legs[li+1].depDay>leg.arrDay){
+        pairingRows+='<div class="line-pair-row line-pair-hotel">\u2193 hotel &mdash; '+leg.arrCity+'</div>';
+      }
+    });
+  });
+  return '<div class="'+cls+'" id="'+cardId+'">'
+    +'<div class="line-header" onclick="_toggleLineDetail(\''+cardId+'\')">'
+    +'<div class="line-id">LINE '+line.id+conflictBadge+'</div>'
+    +'<div class="line-title">'+acTypes+'&nbsp;&nbsp;&nbsp;'+qualLabel+'</div>'
+    +'<div class="line-sub">'
+    +'Credit '+totalCr+'h &nbsp;\u00b7&nbsp; Nights '+nights+' &nbsp;\u00b7&nbsp; TAFB '+tafb+'h<br>'
+    +'Pay $'+pay.toLocaleString()+' &nbsp;+&nbsp; per diem $'+perDiem.toLocaleString()
+    +'</div>'
+    +'<div class="line-score">score '+score+'</div>'
+    +'</div>'
+    +'<div class="line-rank">#'+rank+'</div>'
+    +'<div class="line-toggle" onclick="_toggleLineDetail(\''+cardId+'\')">\u25b8 show '+line.pairings.length+' pairings</div>'
+    +'<div class="line-pairings" id="'+cardId+'-detail">'+pairingRows+'</div>'
+    +'</div>';
+}
+
+function _toggleLineDetail(cardId){
+  var detail=document.getElementById(cardId+'-detail');
+  var card=document.getElementById(cardId);
+  if(!detail) return;
+  var open=detail.classList.toggle('open');
+  var toggle=card && card.querySelector('.line-toggle');
+  var n=detail.querySelectorAll('.line-pair-header').length;
+  if(toggle) toggle.textContent=(open?'\u25be hide':'\u25b8 show')+' '+n+' pairings';
+}
+
+function renderSetupLines(){
+  var el=document.getElementById('setupLines');
+  if(!el||!lines.length) return;
+  var pilot=pilots[0];
+  var ranked=oracleRankLines(pilot,lines);
+  el.innerHTML=ranked.map(function(r){ return _lineCardHtml(r.line,pilot,r.rank); }).join('');
+}
+
+function renderOracleLines(){
+  var el=document.getElementById('oracleLines');
+  var sec=document.getElementById('oracleLinesSection');
+  if(!el) return;
+  var show=lineMode&&lines.length>0;
+  if(sec) sec.style.display=show?'':'none';
+  if(!show){ el.innerHTML=''; return; }
+  var pid=activePilot.oracle||pilots[0].id;
+  var pilot=pilots.find(function(p){ return p.id===pid; })||pilots[0];
+  var ranked=oracleRankLines(pilot,lines);
+  el.innerHTML=ranked.map(function(r){ return _lineCardHtml(r.line,pilot,r.rank); }).join('');
+}
+
 let selectedMode = null;
 
 function renderModeTab(){
-  ['oracle','pairwise'].forEach(m=>{
+  ['rankall','pairwise','scoring'].forEach(m=>{
     const card = document.getElementById('modeCard-'+m);
     if(card){
       card.style.borderColor = m===selectedMode ? '#2563eb' : '';
@@ -2264,21 +3200,25 @@ function renderModeTab(){
     }
   });
   const note = document.getElementById('modeSelectedNote');
-  if(note) note.textContent = selectedMode ? 'Selected: ' + (selectedMode==='oracle'?'Oracle ranking':'Pairwise comparison') + ' — navigating...' : '';
+  let label='';
+  if(selectedMode==='rankall') label='Compare all at once';
+  else if(selectedMode==='pairwise') label='Pairwise';
+  else if(selectedMode==='scoring') label='Scoring';
+  if(note) note.textContent = selectedMode ? 'Selected: '+label+' — navigating…' : '';
 }
 
 function selectMode(mode){
   selectedMode = mode;
   evalMode = mode;
 
-  // Prompts tab only shown for oracle mode; oracle weights tab always visible
+  // Prompts tab: only needed for Compare all at once workflow
   const pBtn = document.getElementById('tab-btn-prompt');
-  if(pBtn) pBtn.style.display = mode === 'oracle' ? '' : 'none';
+  if(pBtn) pBtn.style.display = mode === 'rankall' ? '' : 'none';
 
   // Highlight selected card
   renderModeTab();
 
-  if(mode === 'oracle'){
+  if(mode === 'rankall'){
     setTimeout(()=>switchTab('oracle'), 150);
   } else {
     setTimeout(()=>{ switchTab('eval'); setEvalMode(mode); }, 150);
@@ -2290,7 +3230,9 @@ function selectMode(mode){
 ══════════════════════════════════════════ */
 buildPilots();    // fixed seed on boot — same pilots every load
 buildPairings();  // fixed seed on boot — same pairings every load
+lines = buildLines(); // line mode is default — build lines at boot
 renderSetup();
+renderSetupLines();
 renderLog();
 
 /* Backend proxy — LLM provider/model resolved only server-side (.env). */
@@ -2349,14 +3291,15 @@ async function pingBackend(){
 async function callBackendOracle(){
   const errEl=document.getElementById('evalErr'); errEl.textContent='';
   const p=pilots[activePilot.eval];
-  const promptText=buildPrompt(p);
+  const promptText=lineMode ? buildLinePrompt(p) : buildPrompt(p);
   errEl.style.color='#2563eb';
   errEl.textContent='Calling backend LLM…';
   try{
     const text = await postBackendPrompt(promptText);
     document.getElementById('llmPaste').value = text.trim();
     errEl.textContent=''; errEl.style.color='';
-    scoreCurrentPilot();
+    if(lineMode) scorePilotLineMode(p, text.trim());
+    else scoreCurrentPilot();
   }catch(e){
     errEl.style.color='#dc2626';
     errEl.textContent=String(e.message||e);
@@ -2424,13 +3367,17 @@ async function runAllPilotsBackend(){
     statusEl.textContent = 'Scoring Capt. ' + p.name + '… (' + (i+1) + '/' + pilots.length + ')';
 
     try{
-      const text = await postBackendPrompt(buildPrompt(p));
-      const clean = text.trim().replace(/```json|```/g,'').trim();
-      const llmResult = JSON.parse(clean);
-      if(!Array.isArray(llmResult)) throw new Error('Expected JSON array');
-      _scorePilotFromResult(p, llmResult);
+      var prompt = lineMode ? buildLinePrompt(p) : buildPrompt(p);
+      const text = await postBackendPrompt(prompt);
+      const llmResult = parseLlmJsonArray(text);
+      if(llmResult===null) throw new Error('Could not parse JSON array from LLM response');
+      if(lineMode){
+        scorePilotLineModeFromParsed(p, llmResult);
+      } else {
+        _scorePilotFromResult(p, llmResult);
+      }
       updateEvalProgress();
-      selectEvalPilot(p.id); // refresh evalBox + evalResult + roster badges immediately
+      selectEvalPilot(p.id);
     }catch(e){
       errors.push('Capt. ' + p.name + ': ' + (e.message||e));
       statusEl.style.color = '#d97706';
@@ -2451,6 +3398,88 @@ async function runAllPilotsBackend(){
     const sumEl = document.getElementById('evalSummary');
     if(sumEl) sumEl.scrollIntoView({behavior:'smooth', block:'nearest'});
   }
+}
+
+// ---------------------------------------------------------------------------
+// Line-mode evaluation helpers
+// ---------------------------------------------------------------------------
+
+let _lineLLMRankings = {};  // pilotId -> [{lineId, rank, eligible, shortReason, pros, cons}]
+
+function scorePilotLineModeFromParsed(p, result){
+  if(!Array.isArray(result)) throw new Error('Expected JSON array');
+  _lineLLMRankings[p.id]=result;
+
+  // Compute metrics vs oracle
+  var oracle=oracleRankLines(p,lines); // [{line, qualified, score, rank}]
+  var oMap={};
+  oracle.forEach(function(r){ oMap[r.line.id]=r; });
+  var n=result.length, avg=(n+1)/2;
+  var spN=0,spDL=0,spDO=0,eligOk=0,top1=0;
+  result.forEach(function(r){
+    var o=oMap[r.lineId];
+    if(!o) return;
+    var dl=r.rank-avg, do_=o.rank-avg;
+    spN+=dl*do_; spDL+=dl*dl; spDO+=do_*do_;
+    if(r.eligible===o.qualified) eligOk++;
+    if(r.rank===1 && o.rank===1) top1=1;
+  });
+  var sp=(spDL&&spDO)?Math.round(spN/Math.sqrt(spDL*spDO)*100)/100:0;
+  var elig=n?Math.round(eligOk/n*100):0;
+  var overall=Math.round(((sp+1)/2*60)+(top1?25:0)+(elig/100*15));
+  p.lineEvalScore=overall;
+  p.lineEvalMetrics={spearman:sp,top1:top1,eligAccuracy:elig};
+  p.evalScore=overall; // reuse existing badge colouring
+  p.llmResult=result;
+}
+
+function scorePilotLineMode(p, rawText){
+  var result = parseLlmJsonArray(rawText);
+  if(result===null) throw new Error('Could not parse JSON array from LLM response');
+  scorePilotLineModeFromParsed(p, result);
+}
+
+function renderLineModeEvalResult(p){
+  var el=document.getElementById('evalResult');
+  if(!el) return;
+  var llm=_lineLLMRankings[p.id];
+  var oracle=oracleRankLines(p,lines);
+  if(!llm||!oracle) return;
+  var oMap={};
+  oracle.forEach(function(r){ oMap[r.line.id]=r; });
+  var m=p.lineEvalMetrics||{};
+  var metricsHtml='<div class="eval-summary" style="margin-bottom:14px">'
+    +'<div class="eval-metric-row">'
+    +'<span class="eval-metric-lbl">Spearman \u03c1</span>'
+    +'<span class="eval-metric-val">'+m.spearman+'</span></div>'
+    +'<div class="eval-metric-row">'
+    +'<span class="eval-metric-lbl">Top-1 match</span>'
+    +'<span class="eval-metric-val">'+(m.top1?'\u2713 yes':'\u2717 no')+'</span></div>'
+    +'<div class="eval-metric-row">'
+    +'<span class="eval-metric-lbl">Elig. accuracy</span>'
+    +'<span class="eval-metric-val">'+m.eligAccuracy+'%</span></div>'
+    +'<div class="eval-metric-row">'
+    +'<span class="eval-metric-lbl">Overall score</span>'
+    +'<span class="eval-metric-val">'+p.evalScore+'</span></div>'
+    +'</div>';
+  var sorted=[].concat(llm).sort(function(a,b){ return a.rank-b.rank; });
+  var rowsHtml='<div style="overflow-x:auto"><table class="eval-table"><thead><tr>'
+    +'<th>LLM rank</th><th>Line</th><th>Eligible</th><th>Oracle rank</th><th>Oracle score</th><th>Reason</th>'
+    +'</tr></thead><tbody>';
+  sorted.forEach(function(r){
+    var o=oMap[r.lineId];
+    var rankMatch=o&&o.rank===r.rank;
+    rowsHtml+='<tr'+(rankMatch?' style="background:#f0fdf4"':'')+'>'
+      +'<td>#'+r.rank+'</td>'
+      +'<td>L'+r.lineId+'</td>'
+      +'<td>'+(r.eligible?'\u2713':'\u2717')+'</td>'
+      +'<td>'+(o?'#'+o.rank:'—')+'</td>'
+      +'<td>'+(o?o.score:'—')+'</td>'
+      +'<td style="font-size:11px;max-width:280px">'+r.shortReason+'</td>'
+      +'</tr>';
+  });
+  rowsHtml+='</tbody></table></div>';
+  el.innerHTML=metricsHtml+rowsHtml;
 }
 
 async function runAllPairwiseBackend(){
@@ -2567,14 +3596,34 @@ async function runAllPilotsPairwiseBackend(){
    MODE C — INDEPENDENT SCORING
 ══════════════════════════════════════════ */
 
-let _scoringByPilot = {}; // pilotId → [{pairingId, score, eligible, shortReason, pros, cons}]
+let _scoringByPilot = {};   // pilotId → [{pairingId, score, eligible, shortReason, pros, cons}]  (pairing mode)
+let _lineScoreByPilot = {}; // pilotId → [{lineId, score, eligible, shortReason, pros, cons}]       (line mode)
 
 function populateScoringSelects(){
   var sel = document.getElementById('scoringPilot');
   if(!sel) return;
+  var prevVal = sel.value;
   sel.innerHTML = pilots.map(function(p){
     return '<option value="'+p.id+'">Capt. '+p.name+' (#'+p.seniority+')</option>';
   }).join('');
+  if(prevVal!=='' && pilots.some(function(p){ return String(p.id)===prevVal; })){ sel.value = prevVal; }
+  sel.onchange = refreshScoringResultForPilot;
+  _updateScoringCardTitle();
+  refreshScoringResultForPilot();
+}
+
+function _updateScoringCardTitle(){
+  var title = document.getElementById('scoringCardTitle');
+  if(title) title.textContent = lineMode ? 'Scoring — one call per line' : 'Scoring — one call per pairing';
+}
+
+function refreshScoringResultForPilot(){
+  var sel = document.getElementById('scoringPilot');
+  if(!sel) return;
+  var pilotId = parseInt(sel.value, 10);
+  if(isNaN(pilotId)) return;
+  if(lineMode) renderLineScoringResult(pilotId);
+  else renderScoringResult(pilotId);
 }
 
 function _buildScoringAnchor(pilot){
@@ -2657,10 +3706,96 @@ function buildScoringPrompt(pilot, pair){
     +'{"score": <0-100>, "eligible": <true/false>, "shortReason": "<max 20 words>", "pros": ["...", "..."], "cons": ["...", "..."]}';
 }
 
+function _lineAcLabel(typ){
+  for(var i = 0; i < AIRCRAFT.length; i++){
+    if(AIRCRAFT[i].type === typ) return AIRCRAFT[i].label;
+  }
+  return typ;
+}
+
+/** Scoring prompt for monthly-line pool pairings (simpler legs than pairing-mode schedules). */
+function buildLinePoolScoringPrompt(pilot, lp){
+  var anchor      = _buildScoringAnchor(pilot);
+  var qualified   = pilot.qualifiedTypes.indexOf(lp.aircraft) > -1 ? 'yes' : 'NO \u2014 pilot not qualified';
+  var route       = lp.legs.map(function(l){ return l.from; }).concat([lp.legs[lp.legs.length - 1].to]).join('\u2192');
+  var pilotPay    = Math.round(lp.creditHours * pilot.basePay);
+  var totalVal    = pilotPay + lp.perDiem;
+  var repStr      = fmtTime(((lp.reportTimeMins % 1440) + 1440) % 1440);
+  var legLines    = lp.legs.map(function(l, idx){
+    var arrNote=l.arrDay>l.depDay?' (+' + (l.arrDay-l.depDay)+'d)':'';
+    return '      Leg '+(idx+1)+': '+l.from+(l.depCity?' ('+l.depCity+')':'')+' \u2192 '+l.to+(l.arrCity?' ('+l.arrCity+')':'')+'\n'
+      +'               Departs Day '+l.depDay+' at '+fmtTime(l.depMins)+', arrives Day '+l.arrDay+' at '+fmtTime(l.arrMins)+arrNote+'\n'
+      +'               Block: '+(l.blockMins/60).toFixed(1)+'h | Distance: '+l.distance.toLocaleString()+' mi';
+  }).join('\n');
+  var pairBlock   = 'Pairing '+lp.id+' \u2014 '+lp.legs.length+' legs, '+lp.nightsAway+' night(s) away\n'
+    +'  Aircraft: '+_lineAcLabel(lp.aircraft)+' ('+lp.aircraft+') | Qualified: '+qualified+'\n'
+    +'  Starts: '+lp.startDow+' | Route (airports): '+route+' | Cities touched: '+lp.cities.join(', ')+'\n'
+    +legLines+'\n'
+    +'  TAFB: '+lp.tafb+'h | Block: '+lp.blockHours+'h | Credit: '+lp.creditHours+'h | Nights away: '+lp.nightsAway+'\n'
+    +'  Report time Day 1: '+repStr+'\n'
+    +'  Your pay: $'+pilotPay.toLocaleString()+' ('+lp.creditHours+'h \xd7 $'+pilot.basePay+'/hr) | Per diem: $'+lp.perDiem+' | Total trip value: $'+totalVal.toLocaleString();
+
+  return 'You are evaluating how well a flight pairing fits a specific airline pilot\'s preferences.\n\n'
+    +'== PILOT PROFILE ==\n'
+    +'Name: Capt. '+pilot.name+'\nAge: '+pilot.age+'\nFamily status: '+pilot.family+'\n'
+    +'Home base: BOS\nAircraft qualifications: '+pilot.qualifiedTypes.join(', ')+'\n'
+    +'Preferred aircraft: '+pilot.preferredType+'\nBase pay rate: $'+pilot.basePay+'/hr\n\n'
+    +'== SCORING CALIBRATION ==\n'+anchor+'\n\n'
+    +'== PAIRING TO EVALUATE ==\n'+pairBlock+'\n\n'
+    +'== TASK ==\n'
+    +'Score this pairing for this pilot on a scale of 0\u2013100 using the calibration above.\n'
+    +'If the pilot is not qualified for the aircraft type, score must be 0.\n\n'
+    +'Reply ONLY with JSON (no markdown):\n'
+    +'{"score": <0-100>, "eligible": <true/false>, "shortReason": "<max 20 words>", "pros": ["...", "..."], "cons": ["...", "..."]}';
+}
+
+/** Score a complete monthly LINE (all pairings together) for one pilot. */
+function buildLineScoringPrompt(pilot, line){
+  var anchor   = _buildScoringAnchor(pilot);
+  var qualified = lineQualified(pilot, line);
+  var qualStr  = qualified ? 'yes — all pairings within qualification' : 'NO — one or more pairings outside aircraft qualification';
+  var totalCr  = lineTotalCreditHours(line);
+  var nights   = lineTotalNightsAway(line);
+  var tafb     = lineTotalTafb(line);
+  var perDiem  = lineTotalPerDiem(line);
+  var pay      = linePayForPilot(pilot, line);
+  var totalVal = pay + perDiem;
+  var acTypes  = lineAircraftTypes(line).join(', ');
+
+  var pairLines = line.pairings.map(function(lp, idx){
+    var route = lp.legs.map(function(l){ return l.from; }).concat([lp.legs[lp.legs.length-1].to]).join('\u2192');
+    var repStr = fmtTime(((lp.reportTimeMins%1440)+1440)%1440);
+    var lqual = pilot.qualifiedTypes.indexOf(lp.aircraft) >= 0 ? 'qualified' : 'NOT QUALIFIED';
+    return '  Pairing '+(idx+1)+' (ID '+lp.id+'): '+lp.aircraft+' \u00b7 '+lp.nightsAway+'n away \u00b7 '
+      +'Block '+lp.blockHours+'h \u00b7 Credit '+lp.creditHours+'h \u00b7 TAFB '+lp.tafb+'h \u00b7 '
+      +'Report Day 1: '+repStr+' \u00b7 Route: '+route+' \u00b7 ['+lqual+']';
+  }).join('\n');
+
+  return 'You are evaluating how well a monthly flight LINE fits a specific airline pilot\'s preferences.\n'
+    +'A line is a full month\'s schedule: a set of pairings that together form the pilot\'s workload.\n\n'
+    +'== PILOT PROFILE ==\n'
+    +'Name: Capt. '+pilot.name+'\nAge: '+pilot.age+'\nFamily status: '+pilot.family+'\n'
+    +'Home base: BOS\nAircraft qualifications: '+pilot.qualifiedTypes.join(', ')+'\n'
+    +'Preferred aircraft: '+pilot.preferredType+'\nBase pay rate: $'+pilot.basePay+'/hr\n\n'
+    +'== SCORING CALIBRATION ==\n'+anchor+'\n\n'
+    +'== LINE TO EVALUATE — Line '+line.id+' ==\n'
+    +'  Aircraft types in line: '+acTypes+'\n'
+    +'  Qualified for full line: '+qualStr+'\n'
+    +'  Monthly totals: Credit '+totalCr+'h \u00b7 Nights away '+nights+' \u00b7 TAFB '+tafb+'h\n'
+    +'  Monthly pay: $'+pay.toLocaleString()+' + per diem $'+perDiem.toLocaleString()+' = total $'+totalVal.toLocaleString()+'\n\n'
+    +'  Pairings in this line:\n'+pairLines+'\n\n'
+    +'== TASK ==\n'
+    +'Score this entire monthly line for this pilot on a scale of 0\u2013100.\n'
+    +'Consider the monthly totals (TAFB, nights, pay, schedule mix) holistically.\n'
+    +'If the pilot is not qualified for any pairing in the line, score must be 0 and eligible must be false.\n\n'
+    +'Reply ONLY with JSON (no markdown):\n'
+    +'{"score": <0-100>, "eligible": <true/false>, "shortReason": "<max 20 words>", "pros": ["...", "..."], "cons": ["...", "..."]}';
+}
+
 function parseScoringResponse(raw){
+  var data = parseLlmJsonObject(raw);
+  if(!data) return null;
   try{
-    var clean = raw.trim().replace(/```json/g,'').replace(/```/g,'').trim();
-    var data  = JSON.parse(clean);
     return {
       score:       Math.max(0, Math.min(100, parseInt(data.score, 10)||0)),
       eligible:    data.eligible !== false,
@@ -2677,10 +3812,22 @@ function renderScoringResult(pilotId){
   var scored  = _scoringByPilot[pilotId];
   var pilot   = pilots[pilotId];
   var resultEl = document.getElementById('scoringResult');
-  if(!scored || !scored.length){ resultEl.innerHTML=''; return; }
+  if(!resultEl) return;
+  if(!pilot){
+    resultEl.innerHTML = '';
+    return;
+  }
+  if(!scored || !scored.length){
+    resultEl.innerHTML = '<div class="card" style="background:#fafafa;border-color:#e2e8f0;margin-top:0.75rem">'
+      +'<div style="font-size:12px;color:#64748b;font-family:monospace;line-height:1.7">'
+      +'No scoring run stored for <strong>Capt. '+pilot.name+'</strong>. Click <strong>Run scoring</strong> to fetch scores for this pilot.</div>'
+      +'</div>';
+    return;
+  }
 
   var sorted = scored.slice().sort(function(a,b){ return b.score - a.score; });
-  var oracle = oracleRankPilot(pilot);
+  var plist  = getScoringPairingList();
+  var oracle = oracleRankPairings(pilot, plist);
   var oRankMap = {};
   oracle.forEach(function(r){ oRankMap[r.id] = r.oRank; });
 
@@ -2743,34 +3890,142 @@ function renderScoringResult(pilotId){
   resultEl.innerHTML = html;
 }
 
-async function runScoringMode(){
-  _autoRunStopped = false;
-  var pilotId  = parseInt(document.getElementById('scoringPilot').value, 10);
-  var pilot    = pilots[pilotId];
-  var statusEl = document.getElementById('scoringStatus');
-  var barEl    = document.getElementById('scoringBar');
-  var progEl   = document.getElementById('scoringProgressLabel');
-  var btn      = document.getElementById('runScoringBtn');
-  var stopBtn  = document.getElementById('stopScoringBtn');
-
-  if(btn) btn.disabled = true;
-  if(stopBtn) stopBtn.style.display = '';
-  document.getElementById('scoringResult').innerHTML = '';
-  _scoringByPilot[pilotId] = [];
-  if(barEl) barEl.style.width = '0%';
-
-  var total = pairings.length;
-  var done  = 0;
+/**
+ * Line-mode scoring: one backend call per LINE for one pilot.
+ * Fills _lineScoreByPilot[pilotId] sorted by score descending.
+ * @param {(index:number,line:any,pilot:any)=>void=} onProgress
+ */
+async function scoringLinesLoop(pilotId, onProgress){
+  var pilot  = pilots[pilotId];
   var errors = [];
-
-  for(var i = 0; i < pairings.length; i++){
+  _lineScoreByPilot[pilotId] = [];
+  var n = lines.length;
+  for(var i = 0; i < n; i++){
     if(_autoRunStopped) break;
-    var pair = pairings[i];
-    statusEl.style.color = '#2563eb';
-    statusEl.textContent = 'Scoring P'+pair.id+' ('+(i+1)+'/'+total+')…';
-
+    var line = lines[i];
     try{
-      var prompt = buildScoringPrompt(pilot, pair);
+      var prompt = buildLineScoringPrompt(pilot, line);
+      var raw    = await postBackendPrompt(prompt);
+      var parsed = parseScoringResponse(raw);
+      if(parsed){
+        _lineScoreByPilot[pilotId].push({
+          lineId:      line.id,
+          score:       parsed.score,
+          eligible:    parsed.eligible,
+          shortReason: parsed.shortReason,
+          pros:        parsed.pros,
+          cons:        parsed.cons,
+        });
+      } else {
+        errors.push('L'+line.id+': parse error');
+      }
+    }catch(e){
+      errors.push('L'+line.id+': '+String(e.message||e));
+    }
+    if(typeof onProgress === 'function') onProgress(i, line, pilot);
+  }
+  if(!_autoRunStopped && _lineScoreByPilot[pilotId].length){
+    _lineScoreByPilot[pilotId].sort(function(a,b){ return b.score - a.score; });
+  }
+  return errors;
+}
+
+function renderLineScoringResult(pilotId){
+  var scored  = _lineScoreByPilot[pilotId];
+  var pilot   = pilots[pilotId];
+  var resultEl = document.getElementById('scoringResult');
+  if(!resultEl) return;
+  if(!pilot){ resultEl.innerHTML=''; return; }
+  if(!scored || !scored.length){
+    resultEl.innerHTML = '<div class="card" style="background:#fafafa;border-color:#e2e8f0;margin-top:0.75rem">'
+      +'<div style="font-size:12px;color:#64748b;font-family:monospace;line-height:1.7">'
+      +'No line-scoring run stored for <strong>Capt. '+pilot.name+'</strong>. Click <strong>Run scoring</strong> to score all lines for this pilot.</div>'
+      +'</div>';
+    return;
+  }
+
+  var sorted = scored.slice().sort(function(a,b){ return b.score - a.score; });
+  var oracle = oracleRankLines(pilot, lines);
+  var oMap   = {};
+  oracle.forEach(function(r){ oMap[r.line.id] = r; });
+
+  // Spearman rho over lines
+  var rhoItems = [];
+  sorted.forEach(function(s, i){
+    var o = oMap[s.lineId];
+    if(o) rhoItems.push({llm: i+1, ora: o.rank});
+  });
+  var rho = 'n/a';
+  if(rhoItems.length >= 2){
+    var n   = rhoItems.length;
+    var lm  = rhoItems.reduce(function(s,p){ return s+p.llm; },0)/n;
+    var om  = rhoItems.reduce(function(s,p){ return s+p.ora; },0)/n;
+    var num = rhoItems.reduce(function(s,p){ return s+(p.llm-lm)*(p.ora-om); },0);
+    var dl  = Math.sqrt(rhoItems.reduce(function(s,p){ return s+Math.pow(p.llm-lm,2); },0));
+    var doo = Math.sqrt(rhoItems.reduce(function(s,p){ return s+Math.pow(p.ora-om,2); },0));
+    if(dl && doo) rho = (num/(dl*doo)).toFixed(2);
+  }
+  var top1ok = sorted[0] && oMap[sorted[0].lineId] && oMap[sorted[0].lineId].rank === 1;
+
+  var html = '<div class="card" style="border-color:#9333ea">';
+  html += '<div class="card-title">Line scoring result \u2014 Capt. '+pilot.name+'</div>';
+
+  html += '<div class="pw-summary">';
+  html += '<div class="pw-stat"><div class="pw-stat-val">'+sorted.length+'</div><div class="pw-stat-lbl">lines scored</div></div>';
+  html += '<div class="pw-stat"><div class="pw-stat-val">'+rho+'</div><div class="pw-stat-lbl">Spearman \u03c1</div></div>';
+  html += '<div class="pw-stat"><div class="pw-stat-val" style="color:'+(top1ok?'#16a34a':'#dc2626')+'">'+(top1ok?'\u2713':'\u2717')+'</div><div class="pw-stat-lbl">top-1 match</div></div>';
+  html += '</div>';
+
+  html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:1rem">'
+    +'<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;white-space:nowrap">';
+  html += '<thead><tr style="border-bottom:2px solid #e2e8f0">';
+  html += '<th style="text-align:left;padding:6px 8px;position:sticky;left:0;background:#fff;z-index:1">LLM rank</th>';
+  html += '<th style="text-align:left;padding:6px 8px">Line</th>';
+  html += '<th style="text-align:right;padding:6px 8px">Score</th>';
+  html += '<th style="text-align:center;padding:6px 8px">Elig.</th>';
+  html += '<th style="text-align:center;padding:6px 8px">Oracle rank</th>';
+  html += '<th style="text-align:right;padding:6px 8px">Oracle score</th>';
+  html += '<th style="text-align:left;padding:6px 8px">Reason</th>';
+  html += '</tr></thead><tbody>';
+
+  sorted.forEach(function(s, i){
+    var o        = oMap[s.lineId];
+    var oRank    = o ? '#'+o.rank : '?';
+    var oScore   = o ? o.score : '?';
+    var rankMatch = o && (i+1) === o.rank;
+    var scoreCol = s.score >= 70 ? '#16a34a' : s.score >= 40 ? '#d97706' : '#dc2626';
+    var rowBg    = rankMatch ? '#f0fdf4' : '#fff';
+    html += '<tr style="border-bottom:1px solid #f1f5f9;background:'+rowBg+'">';
+    html += '<td style="padding:6px 8px;font-weight:500;position:sticky;left:0;background:'+rowBg+';z-index:1">'+(i+1)+'</td>';
+    html += '<td style="padding:6px 8px">Line '+s.lineId+'</td>';
+    html += '<td style="padding:6px 8px;text-align:right;font-weight:500;color:'+scoreCol+'">'+s.score+'</td>';
+    html += '<td style="padding:6px 8px;text-align:center">'+(s.eligible?'\u2713':'\u2717')+'</td>';
+    html += '<td style="padding:6px 8px;text-align:center;color:'+(rankMatch?'#16a34a':'#888')+'">'+oRank+(rankMatch?' \u2713':'')+'</td>';
+    html += '<td style="padding:6px 8px;text-align:right;color:#888">'+oScore+'</td>';
+    html += '<td style="padding:6px 8px;color:#555">'+s.shortReason+'</td>';
+    html += '</tr>';
+  });
+
+  html += '</tbody></table></div></div>';
+  resultEl.innerHTML = html;
+}
+
+/**
+ * Runs one pairing-scoring backend call per pairing for one pilot.
+ * Fills _scoringByPilot[pilotId] and sorts by score descending when finished without stop.
+ * @param {(index:number,pair:any,pilot:any,pairsDone:number)=>void=} onProgress
+ */
+async function scoringPairingsLoop(pilotId, onProgress){
+  var pilot = pilots[pilotId];
+  var plist = getScoringPairingList();
+  var errors = [];
+  _scoringByPilot[pilotId] = [];
+  var n = plist.length;
+  for(var i = 0; i < n; i++){
+    if(_autoRunStopped) break;
+    var pair = plist[i];
+    try{
+      var prompt = lineMode ? buildLinePoolScoringPrompt(pilot, pair) : buildScoringPrompt(pilot, pair);
       var raw    = await postBackendPrompt(prompt);
       var parsed = parseScoringResponse(raw);
       if(parsed){
@@ -2788,29 +4043,151 @@ async function runScoringMode(){
     }catch(e){
       errors.push('P'+pair.id+': '+String(e.message||e));
     }
+    if(typeof onProgress === 'function') onProgress(i, pair, pilot, i+1);
+  }
+  if(!_autoRunStopped && _scoringByPilot[pilotId].length){
+    _scoringByPilot[pilotId].sort(function(a,b){ return b.score - a.score; });
+  }
+  return errors;
+}
 
-    done++;
-    if(barEl) barEl.style.width = Math.round(done/total*100)+'%';
-    if(progEl) progEl.textContent = done+' / '+total+' pairings scored';
+async function runScoringMode(){
+  _autoRunStopped = false;
+  var pilotId  = parseInt(document.getElementById('scoringPilot').value, 10);
+  var statusEl = document.getElementById('scoringStatus');
+  var barEl    = document.getElementById('scoringBar');
+  var progEl   = document.getElementById('scoringProgressLabel');
+  var btn      = document.getElementById('runScoringBtn');
+  var allBtn   = document.getElementById('runAllScoringBtn');
+  var stopBtn  = document.getElementById('stopScoringBtn');
+
+  if(btn) btn.disabled = true;
+  if(allBtn) allBtn.disabled = true;
+  if(stopBtn) stopBtn.style.display = '';
+  document.getElementById('scoringResult').innerHTML = '';
+  if(barEl) barEl.style.width = '0%';
+
+  var errors;
+  if(lineMode){
+    var total = lines.length;
+    errors = await scoringLinesLoop(pilotId, function(i, line){
+      statusEl.style.color = '#2563eb';
+      statusEl.textContent = 'Scoring Line '+line.id+' ('+(i+1)+'/'+total+')…';
+      if(barEl) barEl.style.width = Math.round((i+1)/total*100)+'%';
+      if(progEl) progEl.textContent = (i+1)+' / '+total+' lines scored';
+    });
+    if(btn) btn.disabled = false;
+    if(allBtn) allBtn.disabled = false;
+    if(stopBtn) stopBtn.style.display = 'none';
+    if(_autoRunStopped){
+      statusEl.style.color = '#888';
+      statusEl.textContent = 'Stopped.';
+    } else {
+      var errMsg = errors.length ? ' | '+errors.length+' error(s): '+errors.slice(0,5).join('; ')+(errors.length>5?' …':'') : '';
+      statusEl.style.color = errors.length ? '#d97706' : '#16a34a';
+      statusEl.textContent = 'Done \u2014 '+total+'/'+total+' lines scored.'+errMsg;
+      renderLineScoringResult(pilotId);
+    }
+  } else {
+    var total = getScoringPairingList().length;
+    errors = await scoringPairingsLoop(pilotId, function(i, pair){
+      statusEl.style.color = '#2563eb';
+      statusEl.textContent = 'Scoring P'+pair.id+' ('+(i+1)+'/'+total+')…';
+      if(barEl) barEl.style.width = Math.round((i+1)/total*100)+'%';
+      if(progEl) progEl.textContent = (i+1)+' / '+total+' pairings scored';
+    });
+    if(btn) btn.disabled = false;
+    if(allBtn) allBtn.disabled = false;
+    if(stopBtn) stopBtn.style.display = 'none';
+    if(_autoRunStopped){
+      statusEl.style.color = '#888';
+      statusEl.textContent = 'Stopped before completing all pairings.';
+    } else {
+      var errMsg = errors.length ? ' | '+errors.length+' error(s): '+errors.slice(0,5).join('; ')+(errors.length>5?' …':'') : '';
+      statusEl.style.color = errors.length ? '#d97706' : '#16a34a';
+      statusEl.textContent = 'Done \u2014 '+total+'/'+total+' pairings scored.'+errMsg;
+      renderScoringResult(pilotId);
+    }
+  }
+}
+
+async function runAllScoringPilotsBackend(){
+  _autoRunStopped = false;
+  var runBtn   = document.getElementById('runAllScoringBtn');
+  var singleBt = document.getElementById('runScoringBtn');
+  var stopBtn  = document.getElementById('stopScoringBtn');
+  var statusEl = document.getElementById('scoringStatus');
+  var allStat  = document.getElementById('scoringAllStatus');
+  var barEl    = document.getElementById('scoringBar');
+  var progEl   = document.getElementById('scoringProgressLabel');
+  var sel      = document.getElementById('scoringPilot');
+
+  if(runBtn) runBtn.disabled = true;
+  if(singleBt) singleBt.disabled = true;
+  if(stopBtn) stopBtn.style.display = '';
+  if(allStat){ allStat.textContent = ''; allStat.style.color = '#888'; }
+
+  var nPilots    = pilots.length;
+  var nUnit      = lineMode ? lines.length : getScoringPairingList().length;
+  var unitLabel  = lineMode ? 'lines' : 'pairings';
+  var totalCalls = nPilots * nUnit;
+  var grandDone  = 0;
+  var allErrors  = [];
+
+  if(barEl) barEl.style.width = '0%';
+
+  for(var pi = 0; pi < nPilots; pi++){
+    if(_autoRunStopped) break;
+    var p = pilots[pi];
+    if(sel) sel.value = String(p.id);
+    document.getElementById('scoringResult').innerHTML = '';
+
+    var errs;
+    if(lineMode){
+      errs = await scoringLinesLoop(p.id, function(i, line, pilot){
+        grandDone++;
+        statusEl.style.color = '#2563eb';
+        statusEl.textContent = 'Capt. '+pilot.name+' \u2014 Line '+line.id+' ('+(i+1)+'/'+nUnit+' this pilot)';
+        if(allStat){ allStat.textContent = grandDone+' / '+totalCalls+' calls · pilot '+(pi+1)+' / '+nPilots; }
+        if(barEl) barEl.style.width = Math.round(grandDone/totalCalls*100)+'%';
+        if(progEl) progEl.textContent = grandDone+' / '+totalCalls+' backend calls total';
+      });
+    } else {
+      errs = await scoringPairingsLoop(p.id, function(i, pair, pilot){
+        grandDone++;
+        statusEl.style.color = '#2563eb';
+        statusEl.textContent = 'Capt. '+pilot.name+' \u2014 P'+pair.id+' ('+(i+1)+'/'+nUnit+' this pilot)';
+        if(allStat){ allStat.textContent = grandDone+' / '+totalCalls+' calls · pilot '+(pi+1)+' / '+nPilots; }
+        if(barEl) barEl.style.width = Math.round(grandDone/totalCalls*100)+'%';
+        if(progEl) progEl.textContent = grandDone+' / '+totalCalls+' backend calls total';
+      });
+    }
+    allErrors = allErrors.concat(errs||[]);
+
+    if(!_autoRunStopped){
+      if(lineMode) renderLineScoringResult(p.id);
+      else renderScoringResult(p.id);
+      try{ renderEvalSummary(); }catch(_){}
+    }
   }
 
-  if(btn) btn.disabled = false;
+  if(runBtn) runBtn.disabled = false;
+  if(singleBt) singleBt.disabled = false;
   if(stopBtn) stopBtn.style.display = 'none';
 
   if(_autoRunStopped){
     statusEl.style.color = '#888';
-    statusEl.textContent = 'Stopped at '+done+'/'+total+'.';
+    statusEl.textContent = 'Stopped \u2014 '+grandDone+' / '+totalCalls+' calls finished.';
+    if(allStat){ allStat.style.color = '#888'; }
   } else {
-    var errMsg = errors.length ? ' | '+errors.length+' error(s): '+errors.join('; ') : '';
-    statusEl.style.color = errors.length ? '#d97706' : '#16a34a';
-    statusEl.textContent = 'Done \u2014 '+done+'/'+total+' pairings scored.'+errMsg;
-    _scoringByPilot[pilotId].sort(function(a,b){ return b.score - a.score; });
-    renderScoringResult(pilotId);
+    statusEl.style.color = allErrors.length ? '#d97706' : '#16a34a';
+    statusEl.textContent = 'All '+nPilots+' pilots scored ('+totalCalls+' calls).'+ (allErrors.length ? ' Some errors: '+allErrors.length+'. See status above per run.' : '');
+    if(allStat){ allStat.textContent = 'Complete'; allStat.style.color = '#16a34a'; }
   }
 }
 
 initBackendCard();
-// Only hide Prompts tab until oracle mode is selected
+// Prompts tab hidden until user selects Compare all at once on Scenario tab
 const _promptBtn = document.getElementById('tab-btn-prompt');
 if(_promptBtn) _promptBtn.style.display = 'none';
 </script>

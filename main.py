@@ -29,14 +29,21 @@ import sys
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from models import LLMPairingRank, ScoredPairing, Pilot, Pairing, OracleWeights
+from models import LLMLineRank, LLMPairingRank, LineScoringResult, ScoredPairing, Pilot, Pairing, OracleWeights
 from generator import ScenarioGenerator
-from oracle import oracle_rank_pilot, oracle_rank_all
-from prompt_builder import oracle_prompt, pairwise_prompt, scoring_prompt, generate_anchor
-from evaluator import evaluate_pilot, pairwise_agreement, pairwise_summary, evaluate_scoring_stability
+from oracle import oracle_rank_all, oracle_rank_lines, oracle_rank_pilot
+from prompt_builder import (
+    generate_anchor, generate_line_anchor,
+    independent_scoring_line_prompt, oracle_line_prompt, oracle_prompt,
+    pairwise_line_prompt, pairwise_prompt, scoring_prompt,
+)
+from evaluator import (
+    evaluate_line_pilot, evaluate_pilot,
+    pairwise_agreement, pairwise_summary, evaluate_scoring_stability,
+)
 from allocator import (
-    oracle_allocation, llm_allocation,
-    compare_allocations, format_allocation_report
+    llm_line_allocation, oracle_allocation, oracle_line_allocation,
+    llm_allocation, compare_allocations, format_allocation_report,
 )
 from llm_api import call_llm
 
@@ -46,12 +53,14 @@ from llm_api import call_llm
 # ---------------------------------------------------------------------------
 
 DEFAULT_CONFIG = {
-    "n_pilots":       3,
-    "n_pairings":     5,
-    "base":           "BOS",
-    "pilot_seed":     1234567,
-    "pairing_seed":   42,
-    "llm_name":       "manual",
+    "n_pilots":          3,
+    "n_pairings":        100,  # 20 lines × 5 pairings (line mode default)
+    "n_lines":           20,
+    "pairings_per_line": 5,
+    "base":              "BOS",
+    "pilot_seed":        1234567,
+    "pairing_seed":      42,
+    "llm_name":          "manual",
 }
 
 
@@ -60,7 +69,7 @@ DEFAULT_CONFIG = {
 # ---------------------------------------------------------------------------
 
 def parse_oracle_response(raw: str, n_pairings: int) -> Optional[List[LLMPairingRank]]:
-    """Parse LLM JSON response for oracle mode ranking."""
+    """Parse LLM JSON response for compare-all-at-once pairing ranking (single prompt, all pairings)."""
     try:
         clean = raw.strip().replace("```json", "").replace("```", "").strip()
         data  = json.loads(clean)
@@ -82,6 +91,29 @@ def parse_oracle_response(raw: str, n_pairings: int) -> Optional[List[LLMPairing
         return None
 
 
+def parse_line_oracle_response(raw: str, n_lines: int) -> Optional[List[LLMLineRank]]:
+    """Parse LLM JSON response for compare-all-at-once line ranking (one prompt, all lines)."""
+    try:
+        clean = raw.strip().replace("```json", "").replace("```", "").strip()
+        data  = json.loads(clean)
+        if not isinstance(data, list):
+            raise ValueError("Expected JSON array")
+        return [
+            LLMLineRank(
+                line_id=int(r["lineId"]),
+                rank=int(r["rank"]),
+                eligible=bool(r.get("eligible", True)),
+                short_reason=r.get("shortReason", ""),
+                pros=r.get("pros", []),
+                cons=r.get("cons", []),
+            )
+            for r in data
+        ]
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"  ⚠ Parse error (line response): {e}")
+        return None
+
+
 def parse_pairwise_response(raw: str) -> Optional[dict]:
     """Parse LLM JSON response for pairwise comparison."""
     try:
@@ -100,6 +132,23 @@ def parse_pairwise_response(raw: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # Scoring mode helpers
 # ---------------------------------------------------------------------------
+
+def parse_line_score_response(raw: str, call_idx: int) -> Optional[dict]:
+    """Parse a single independent line scoring LLM response."""
+    try:
+        clean = raw.strip().replace("```json", "").replace("```", "").strip()
+        data  = json.loads(clean)
+        return {
+            "score":       max(0, min(100, int(data["score"]))),
+            "eligible":    bool(data.get("eligible", True)),
+            "short_reason": data.get("shortReason", ""),
+            "pros":        data.get("pros", []),
+            "cons":        data.get("cons", []),
+        }
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"  ⚠ Parse error (call {call_idx}): {e}")
+        return None
+
 
 def parse_scoring_response(
     raw: str,
@@ -278,6 +327,255 @@ def scored_pairings_to_llm_ranking(
 
 
 # ---------------------------------------------------------------------------
+# Consistency-checked line scoring (--mode scoring --lines)
+# ---------------------------------------------------------------------------
+
+async def _score_one_line(
+    pilot: Pilot,
+    line,
+    call_idx: int,
+    provider: str,
+    model: str,
+    sem: asyncio.Semaphore,
+) -> Optional[dict]:
+    """Single async scoring call for one pilot×line pair."""
+    anchor = generate_line_anchor(pilot)
+    prompt = independent_scoring_line_prompt(pilot, line, anchor=anchor)
+    async with sem:
+        try:
+            if provider == "anthropic":
+                import anthropic as _anthropic
+                client = _anthropic.AsyncAnthropic()
+                msg = await client.messages.create(
+                    model=model,
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = msg.content[0].text
+            else:
+                import openai as _openai
+                client = _openai.AsyncOpenAI()
+                resp = await client.chat.completions.create(
+                    model=model,
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = resp.choices[0].message.content
+            return parse_line_score_response(raw, call_idx)
+        except Exception as e:
+            print(f"  ⚠ API error (call {call_idx}, L{line.id} for {pilot.name}): {e}")
+            return None
+
+
+async def _pairwise_one_line(
+    pilot: Pilot,
+    line_a,
+    line_b,
+    provider: str,
+    model: str,
+    sem: asyncio.Semaphore,
+) -> Optional[int]:
+    """
+    Single async pairwise comparison between two lines for one pilot.
+    Returns the winning line's id, or None on failure.
+    """
+    prompt = pairwise_line_prompt(pilot, line_a, line_b)
+    async with sem:
+        try:
+            if provider == "anthropic":
+                import anthropic as _anthropic
+                client = _anthropic.AsyncAnthropic()
+                msg = await client.messages.create(
+                    model=model,
+                    max_tokens=256,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = msg.content[0].text
+            else:
+                import openai as _openai
+                client = _openai.AsyncOpenAI()
+                resp = await client.chat.completions.create(
+                    model=model,
+                    max_tokens=256,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = resp.choices[0].message.content
+            clean  = raw.strip().replace("```json", "").replace("```", "").strip()
+            data   = json.loads(clean)
+            winner = int(data["winner"])
+            return line_a.id if winner == 1 else line_b.id
+        except Exception as e:
+            print(f"  ⚠ Pairwise error (L{line_a.id} vs L{line_b.id} for {pilot.name}): {e}")
+            return None
+
+
+async def run_scored_lines(
+    pilots: List[Pilot],
+    lines: List,
+    provider: str,
+    model: str,
+    n_runs: int = 2,
+    batch_size: int = 20,
+) -> Dict[int, List[LineScoringResult]]:
+    """
+    Score all pilot × line combinations with n_runs independent calls each.
+
+    For each pilot:
+      1. Score each line n_runs times; compute mean/std/stability.
+      2. Preliminary sort: ineligible last, then by mean score descending.
+      3. For each consecutive eligible pair where either member is UNSTABLE
+         and their score intervals overlap, run a pairwise comparison to
+         resolve the ordering.
+      4. Set ranking_method = "pairwise_tiebreak" on involved lines.
+      5. Print per-pilot stability summary and a warning if > 30% unstable.
+
+    Returns:
+        dict: pilot.id → List[LineScoringResult] in final ranked order.
+    """
+    sem = asyncio.Semaphore(batch_size)
+
+    # Dispatch all n_runs scoring calls for every pilot × line
+    tasks:     List = []
+    task_keys: List = []   # (pilot.id, line.id)
+    call_idx = 0
+    for pilot in pilots:
+        for line in lines:
+            for _ in range(n_runs):
+                tasks.append(_score_one_line(pilot, line, call_idx, provider, model, sem))
+                task_keys.append((pilot.id, line.id))
+                call_idx += 1
+
+    total = len(tasks)
+    print(
+        f"  Dispatching {total} scoring call(s) "
+        f"({n_runs} run(s) × {len(pilots)} pilot(s) × {len(lines)} line(s), "
+        f"≤{batch_size} concurrent)…"
+    )
+    raw_results = await asyncio.gather(*tasks)
+
+    # Group raw results by (pilot.id, line.id)
+    run_buckets: Dict = {}
+    for key, result in zip(task_keys, raw_results):
+        if result is not None:
+            run_buckets.setdefault(key, []).append(result)
+
+    by_pilot: Dict[int, List[LineScoringResult]] = {p.id: [] for p in pilots}
+    global_stable = global_marginal = global_unstable = global_pairwise = 0
+
+    for pilot in pilots:
+        pilot_results: List[LineScoringResult] = []
+
+        for line in lines:
+            runs = run_buckets.get((pilot.id, line.id), [])
+            if not runs:
+                continue
+            scores = [r["score"] for r in runs]
+            stats  = evaluate_scoring_stability(scores)
+            last   = runs[-1]
+            pilot_results.append(LineScoringResult(
+                line=line,
+                score_runs=scores,
+                score_mean=stats["mean"],
+                score_std=stats["std"],
+                stability=stats["stability"],
+                eligible=last["eligible"],
+                short_reason=last["short_reason"],
+                pros=last["pros"],
+                cons=last["cons"],
+            ))
+
+        # Preliminary sort: ineligible last, then by mean score desc
+        pilot_results.sort(
+            key=lambda r: (0 if r.eligible else 1, -r.score_mean, r.line.id)
+        )
+
+        # Find consecutive eligible pairs where either is UNSTABLE and
+        # their score intervals [mean-std, mean+std] overlap
+        pairwise_tasks: List = []
+        pairwise_indices: List = []
+        for i in range(len(pilot_results) - 1):
+            a, b = pilot_results[i], pilot_results[i + 1]
+            if not a.eligible or not b.eligible:
+                continue
+            if a.stability == "unstable" or b.stability == "unstable":
+                if abs(a.score_mean - b.score_mean) < a.score_std + b.score_std:
+                    pairwise_tasks.append(
+                        _pairwise_one_line(pilot, a.line, b.line, provider, model, sem)
+                    )
+                    pairwise_indices.append((i, i + 1))
+
+        if pairwise_tasks:
+            print(
+                f"  Capt. {pilot.name}: running {len(pairwise_tasks)} pairwise "
+                f"tiebreak(s) for overlapping unstable scores…"
+            )
+            pw_results = await asyncio.gather(*pairwise_tasks)
+            n_resolved = 0
+            for (i, j), winner_id in zip(pairwise_indices, pw_results):
+                if winner_id is None:
+                    continue
+                a, b = pilot_results[i], pilot_results[j]
+                a.ranking_method = "pairwise_tiebreak"
+                b.ranking_method = "pairwise_tiebreak"
+                if winner_id == b.line.id:   # pairwise disagrees with score order — swap
+                    pilot_results[i], pilot_results[j] = pilot_results[j], pilot_results[i]
+                n_resolved += 1
+            global_pairwise += n_resolved
+
+        # Tally per-pilot stability
+        n_stable   = sum(1 for r in pilot_results if r.stability == "stable")
+        n_marginal = sum(1 for r in pilot_results if r.stability == "marginal")
+        n_unstable = sum(1 for r in pilot_results if r.stability == "unstable")
+        n_total    = len(pilot_results)
+
+        global_stable   += n_stable
+        global_marginal += n_marginal
+        global_unstable += n_unstable
+
+        if n_total > 0 and n_unstable / n_total > 0.30:
+            print(
+                f"  ⚠ WARNING: scoring is unreliable for Capt. {pilot.name}. "
+                f"Consider switching to Swiss tournament mode for this pilot."
+            )
+
+        by_pilot[pilot.id] = pilot_results
+
+    # Aggregate summary
+    global_total = global_stable + global_marginal + global_unstable
+    print(
+        f"\n  Scoring stability: {global_stable}/{global_total} stable, "
+        f"{global_marginal} marginal, {global_unstable} unstable"
+    )
+    if global_pairwise > 0:
+        print(f"  {global_pairwise} unstable pair(s) resolved via pairwise tiebreak")
+
+    return by_pilot
+
+
+def scored_lines_to_llm_line_rankings(
+    scored_by_pilot: Dict[int, List[LineScoringResult]],
+) -> Dict[int, List[LLMLineRank]]:
+    """
+    Convert sorted LineScoringResult lists to LLMLineRank lists.
+    Enables evaluate_line_pilot() and llm_line_allocation() to work unchanged.
+    """
+    return {
+        pid: [
+            LLMLineRank(
+                line_id=r.line.id,
+                rank=rank,
+                eligible=r.eligible,
+                short_reason=r.short_reason,
+                pros=r.pros,
+                cons=r.cons,
+            )
+            for rank, r in enumerate(results, start=1)
+        ]
+        for pid, results in scored_by_pilot.items()
+    }
+
+
+# ---------------------------------------------------------------------------
 # Manual mode helpers
 # ---------------------------------------------------------------------------
 
@@ -286,7 +584,7 @@ def manual_oracle_run(
     pairings: List[Pairing],
 ) -> Dict[int, List[LLMPairingRank]]:
     """
-    Print prompts and collect LLM responses manually (paste from any LLM).
+    Print rank-all prompts and collect LLM responses manually (paste from any LLM).
     Returns dict: pilot.id → list of LLMPairingRank
     """
     results: Dict[int, List[LLMPairingRank]] = {}
@@ -327,7 +625,7 @@ def auto_oracle_run(
     provider: str,
 ) -> Dict[int, List[LLMPairingRank]]:
     """
-    Automatically call LLM API for all pilots (oracle mode).
+    Automatically call LLM API for all pilots (compare-all-at-once rank-all prompt).
     """
     results: Dict[int, List[LLMPairingRank]] = {}
     for pilot in pilots:
@@ -360,6 +658,7 @@ def export_results(
     llm_alloc: Optional[list],
     llm_name: str,
     config: dict,
+    scored_lines_by_pilot: Optional[dict] = None,
 ) -> dict:
     """Build full results dict for JSON export."""
 
@@ -476,7 +775,27 @@ def export_results(
             "version": "1.0",
             "base_airport": config["base"],
             "pay_method": "credit_hours × pilot_base_pay + per_diem",
-        }
+        },
+        "line_scoring": (
+            {
+                pilot.name: [
+                    {
+                        "line_id":        r.line.id,
+                        "score_mean":     r.score_mean,
+                        "score_runs":     r.score_runs,
+                        "score_std":      r.score_std,
+                        "stability":      r.stability,
+                        "ranking_method": r.ranking_method,
+                        "eligible":       r.eligible,
+                        "short_reason":   r.short_reason,
+                    }
+                    for r in scored_lines_by_pilot.get(pilot.id, [])
+                ]
+                for pilot in pilots
+            }
+            if scored_lines_by_pilot
+            else None
+        ),
     }
 
 
@@ -493,12 +812,28 @@ def main():
         "--mode",
         choices=["oracle", "scoring"],
         default="oracle",
-        help="Evaluation mode: oracle (rank-all prompt) or scoring (independent 0-100 per pairing)",
+        help=(
+            'LLM testing approach: \"oracle\" = compare-all-at-once (single rank-all prompt per pilot); '
+            '"scoring" = independent 0–100 per pairing (oracle ground truth from weights is always computed).'
+        ),
     )
+    parser.set_defaults(lines=True)
+    parser.add_argument(
+        "--no-lines",
+        dest="lines",
+        action="store_false",
+        help="Use individual pairing bidding instead of monthly lines",
+    )
+    parser.add_argument("--n-lines",           type=int, default=20, help="Number of lines")
+    parser.add_argument("--pairings-per-line", type=int, default=5,  help="Pairings per line")
     parser.add_argument("--pilots",   type=int, default=3,   help="Number of pilots")
     parser.add_argument("--pairings", type=int, default=5,   help="Number of pairings")
     parser.add_argument("--pilot-seed",   type=int, default=1234567)
     parser.add_argument("--pairing-seed", type=int, default=42)
+    parser.add_argument(
+        "--consistency-runs", type=int, default=2,
+        help="Independent scoring runs per pilot×line in scoring+lines mode (default: 2)",
+    )
     parser.add_argument("--output",   default="results.json", help="Output file")
     args = parser.parse_args()
 
@@ -524,40 +859,84 @@ def main():
     print("\n[1/5] Generating scenario...")
     gen      = ScenarioGenerator(args.pilot_seed, args.pairing_seed)
     pilots   = gen.build_pilots(args.pilots, config["base"])
-    pairings = gen.build_pairings(args.pairings, pilots, config["base"])
-    print(f"  {len(pilots)} pilots, {len(pairings)} pairings generated")
+
+    if args.lines:
+        n_pair   = args.n_lines * args.pairings_per_line
+        max_b767 = round(n_pair * 0.32)   # ~32% B767; rest B737 for qualification coverage
+        pairings = gen.build_pairings(n_pair, pilots, config["base"], max_b767=max_b767)
+        lines    = gen.build_lines(pairings, args.n_lines, args.pairings_per_line)
+        print(f"  {len(pilots)} pilots, {len(pairings)} pairings → {len(lines)} lines "
+              f"({args.pairings_per_line} pairings/line)")
+    else:
+        pairings = gen.build_pairings(args.pairings, pilots, config["base"])
+        lines    = []
+        print(f"  {len(pilots)} pilots, {len(pairings)} pairings generated")
 
     # 2. Oracle rankings
     print("\n[2/5] Computing oracle rankings...")
-    oracle_rankings = oracle_rank_all(pilots, pairings)
-    for pilot in pilots:
-        ranked = oracle_rankings[pilot.name]
-        top    = next(r for r in ranked if r.oracle_rank == 1)
-        print(f"  Capt. {pilot.name}: best = P{top.pairing.id} ({top.oracle_score}pts)")
+    if args.lines:
+        oracle_line_rankings = {
+            pilot.name: oracle_rank_lines(pilot, lines)
+            for pilot in pilots
+        }
+        oracle_rankings = {}   # unused in line mode
+        for pilot in pilots:
+            ranked = oracle_line_rankings[pilot.name]
+            top    = next(r for r in ranked if r.oracle_rank == 1)
+            print(f"  Capt. {pilot.name}: best line = L{top.line.id} ({top.oracle_score}pts) "
+                  f"— {top.line.total_credit_hours}h credit, {top.line.total_nights_away} nights")
+    else:
+        oracle_rankings = oracle_rank_all(pilots, pairings)
+        oracle_line_rankings = {}
+        for pilot in pilots:
+            ranked = oracle_rankings[pilot.name]
+            top    = next(r for r in ranked if r.oracle_rank == 1)
+            print(f"  Capt. {pilot.name}: best = P{top.pairing.id} ({top.oracle_score}pts)")
 
     # 3. Get LLM rankings
+    scored_lines_by_pilot: dict = {}
     if args.mode == "scoring":
         if not args.auto:
             print("\nScoring mode requires --auto (API key needed for parallel calls).")
-            print("Use --mode oracle for manual copy-paste workflow.")
+            print('Use --mode oracle for compare-all-at-once manual copy-paste (CLI flag name unchanged).')
             sys.exit(1)
 
-        print("\n[2.5/5] Pre-flight consistency check…")
-        asyncio.run(run_consistency_checks(pilots, pairings, args.provider, args.model))
+        if args.lines:
+            print(
+                f"\n[3/5] Independent line scoring — "
+                f"{len(pilots)} pilot(s) × {len(lines)} line(s) × "
+                f"{args.consistency_runs} run(s)…"
+            )
+            scored_lines_by_pilot = asyncio.run(
+                run_scored_lines(
+                    pilots, lines, args.provider, args.model,
+                    n_runs=args.consistency_runs,
+                )
+            )
+            llm_line_rankings = scored_lines_to_llm_line_rankings(scored_lines_by_pilot)
+            llm_rankings = {}
+            for pilot in pilots:
+                results = scored_lines_by_pilot.get(pilot.id, [])
+                top = results[0] if results else None
+                if top:
+                    print(f"  Capt. {pilot.name}: best = L{top.line.id} (mean {top.score_mean})")
+        else:
+            print("\n[2.5/5] Pre-flight consistency check…")
+            asyncio.run(run_consistency_checks(pilots, pairings, args.provider, args.model))
 
-        print(f"\n[3/5] Independent scoring — {len(pilots)} pilots × {len(pairings)} pairings…")
-        scored_by_pilot = asyncio.run(
-            run_independent_scoring(pilots, pairings, args.provider, args.model)
-        )
-        llm_rankings = {
-            pid: scored_pairings_to_llm_ranking(scored)
-            for pid, scored in scored_by_pilot.items()
-        }
-        for pilot in pilots:
-            if pilot.id in scored_by_pilot:
-                top = scored_by_pilot[pilot.id][0] if scored_by_pilot[pilot.id] else None
-                score_str = f"best = P{top.pairing.id} (score {top.score})" if top else "no results"
-                print(f"  Capt. {pilot.name}: {score_str}")
+            print(f"\n[3/5] Independent scoring — {len(pilots)} pilots × {len(pairings)} pairings…")
+            scored_by_pilot = asyncio.run(
+                run_independent_scoring(pilots, pairings, args.provider, args.model)
+            )
+            llm_rankings = {
+                pid: scored_pairings_to_llm_ranking(scored)
+                for pid, scored in scored_by_pilot.items()
+            }
+            for pilot in pilots:
+                if pilot.id in scored_by_pilot:
+                    top = scored_by_pilot[pilot.id][0] if scored_by_pilot[pilot.id] else None
+                    score_str = f"best = P{top.pairing.id} (score {top.score})" if top else "no results"
+                    print(f"  Capt. {pilot.name}: {score_str}")
     else:
         print(f"\n[3/5] {'Calling LLM API' if args.auto else 'Collecting LLM responses (manual)'}...")
         if args.auto:
@@ -565,42 +944,127 @@ def main():
         else:
             llm_rankings = manual_oracle_run(pilots, pairings)
 
-    if not llm_rankings:
+    if not llm_rankings and not args.lines:
         print("No LLM rankings collected. Exiting.")
         sys.exit(0)
 
     # 4. Evaluate
     print("\n[4/5] Evaluating...")
     eval_metrics = {}
-    for pilot in pilots:
-        if pilot.id not in llm_rankings:
-            continue
-        metrics = evaluate_pilot(
-            pilot,
-            llm_rankings[pilot.id],
-            oracle_rankings[pilot.name],
-        )
-        eval_metrics[pilot.id] = metrics
-        print(
-            f"  Capt. {pilot.name}: "
-            f"ρ={metrics.spearman}  "
-            f"top-1={'✓' if metrics.top1_match else '✗'}  "
-            f"elig={metrics.elig_accuracy:.0%}"
-        )
+
+    if args.lines:
+        if args.mode != "scoring":
+            # Collect line rankings via rank-all oracle prompt (manual or automated)
+            llm_line_rankings = {}
+            if not args.auto:
+                for pilot in pilots:
+                    prompt = oracle_line_prompt(pilot, lines)
+                    print(f"\n{'='*60}")
+                    print(f"LINE PROMPT FOR: Capt. {pilot.name}")
+                    print("=" * 60)
+                    print(prompt)
+                    print("\nPaste LLM response (JSON array), then press Enter twice:")
+                    input_lines = []
+                    while True:
+                        ln = input()
+                        if ln == "" and input_lines and input_lines[-1] == "":
+                            break
+                        input_lines.append(ln)
+                    raw    = "\n".join(input_lines).strip()
+                    parsed = parse_line_oracle_response(raw, len(lines))
+                    if parsed:
+                        llm_line_rankings[pilot.id] = parsed
+                        print(f"  ✓ Parsed {len(parsed)} line rankings for Capt. {pilot.name}")
+            else:
+                for pilot in pilots:
+                    prompt = oracle_line_prompt(pilot, lines)
+                    print(f"  Calling {args.provider}/{args.model} for Capt. {pilot.name} (lines)…", end=" ")
+                    try:
+                        raw    = call_llm(prompt, args.model, args.provider)
+                        parsed = parse_line_oracle_response(raw, len(lines))
+                        if parsed:
+                            llm_line_rankings[pilot.id] = parsed
+                            print("✓")
+                        else:
+                            print("✗ parse error")
+                    except Exception as e:
+                        print(f"✗ API error: {e}")
+        # else: llm_line_rankings was already set by run_scored_lines in step 3
+
+        for pilot in pilots:
+            if pilot.id not in llm_line_rankings:
+                continue
+            metrics = evaluate_line_pilot(
+                pilot, llm_line_rankings[pilot.id], oracle_line_rankings[pilot.name]
+            )
+            eval_metrics[pilot.id] = metrics
+            print(
+                f"  Capt. {pilot.name}: "
+                f"ρ={metrics.spearman}  "
+                f"top-1={'✓' if metrics.top1_match else '✗'}  "
+                f"elig={metrics.elig_accuracy:.0%}"
+            )
+    else:
+        llm_line_rankings = {}
+        for pilot in pilots:
+            if pilot.id not in llm_rankings:
+                continue
+            metrics = evaluate_pilot(
+                pilot, llm_rankings[pilot.id], oracle_rankings[pilot.name]
+            )
+            eval_metrics[pilot.id] = metrics
+            print(
+                f"  Capt. {pilot.name}: "
+                f"ρ={metrics.spearman}  "
+                f"top-1={'✓' if metrics.top1_match else '✗'}  "
+                f"elig={metrics.elig_accuracy:.0%}"
+            )
 
     # 5. Allocation
     print("\n[5/5] Running allocation...")
-    oracle_alloc = oracle_allocation(pilots, pairings)
-    print(format_allocation_report(oracle_alloc, "Oracle"))
+    if args.lines:
+        oracle_alloc = oracle_line_allocation(pilots, lines)
+        print("\n--- Oracle line allocation ---")
+        for r in sorted(oracle_alloc, key=lambda x: x.pilot.seniority):
+            ln = r.line
+            if ln:
+                print(f"  #{r.pilot.seniority} Capt. {r.pilot.name}: "
+                      f"Line {ln.id} ({ln.total_credit_hours}h credit, "
+                      f"{ln.total_nights_away} nights) — rank #{r.rank_awarded} choice")
+            else:
+                print(f"  #{r.pilot.seniority} Capt. {r.pilot.name}: no qualified line available")
 
-    llm_alloc = None
-    if len(llm_rankings) == len(pilots):
-        try:
-            llm_alloc = llm_allocation(pilots, pairings, llm_rankings)
-            comparison = compare_allocations(oracle_alloc, llm_alloc)
-            print(format_allocation_report(llm_alloc, "LLM", comparison))
-        except ValueError as e:
-            print(f"  ⚠ LLM allocation skipped: {e}")
+        llm_alloc = None
+        if len(llm_line_rankings) == len(pilots):
+            try:
+                llm_alloc = llm_line_allocation(pilots, lines, llm_line_rankings)
+                print("\n--- LLM line allocation ---")
+                for r in sorted(llm_alloc, key=lambda x: x.pilot.seniority):
+                    ln = r.line
+                    ora_ln = next(
+                        (x.line for x in oracle_alloc if x.pilot.id == r.pilot.id), None
+                    )
+                    match = ora_ln and ln and ora_ln.id == ln.id
+                    marker = "✓" if match else "✗"
+                    if ln:
+                        print(f"  #{r.pilot.seniority} Capt. {r.pilot.name}: "
+                              f"Line {ln.id} — rank #{r.rank_awarded} choice  {marker}")
+                    else:
+                        print(f"  #{r.pilot.seniority} Capt. {r.pilot.name}: none")
+            except ValueError as e:
+                print(f"  ⚠ LLM line allocation skipped: {e}")
+    else:
+        oracle_alloc = oracle_allocation(pilots, pairings)
+        print(format_allocation_report(oracle_alloc, "Oracle"))
+
+        llm_alloc = None
+        if len(llm_rankings) == len(pilots):
+            try:
+                llm_alloc = llm_allocation(pilots, pairings, llm_rankings)
+                comparison = compare_allocations(oracle_alloc, llm_alloc)
+                print(format_allocation_report(llm_alloc, "LLM", comparison))
+            except ValueError as e:
+                print(f"  ⚠ LLM allocation skipped: {e}")
 
     # Export
     results = export_results(
@@ -608,6 +1072,7 @@ def main():
         llm_rankings, eval_metrics,
         oracle_alloc, llm_alloc,
         config["llm_name"], config,
+        scored_lines_by_pilot=scored_lines_by_pilot,
     )
     with open(args.output, "w") as f:
         json.dump(results, f, indent=2)

@@ -15,7 +15,7 @@ Usage:
 import random
 from typing import List, Optional
 
-from models import Leg, Pairing, Pilot, OracleWeights
+from models import Leg, Line, Pairing, Pilot, OracleWeights
 
 # ---------------------------------------------------------------------------
 # Static airport data
@@ -97,8 +97,9 @@ def _get_distance(dep: str, arr: str) -> int:
 
 
 def _block_mins(distance_mi: int, speed_mph: int) -> int:
-    """Block time = flight time + 30 min taxi/buffer."""
-    return round(distance_mi / speed_mph * 60) + 30
+    """Block time = flight time + 30 min taxi/buffer, rounded to nearest 5 min."""
+    raw = round(distance_mi / speed_mph * 60) + 30
+    return round(raw / 5) * 5
 
 
 def _fmt_time(mins_from_midnight: int) -> str:
@@ -176,12 +177,20 @@ class ScenarioGenerator:
         n: int = 5,
         pilots: Optional[List[Pilot]] = None,
         base: str = "BOS",
+        max_b767: Optional[int] = None,
     ) -> List[Pairing]:
         """
         Generate n circular pairings starting and ending at `base`.
         Variable legs (2-4) and nights away (1-3).
 
-        If pilots is provided, reference pay is taken from pilots[0].
+        Args:
+            n:        Number of pairings to generate.
+            pilots:   If provided, reference pay is taken from pilots[0].
+            base:     Home-base airport code.
+            max_b767: If set, at most this many pairings will be B767.
+                      All remaining pairings will be B737.  Used to enforce
+                      the 17 B737 / 8 B767 ratio when building 25 pairings
+                      for line mode.
         """
         rng       = self._prng_pairing
         pairings  = []
@@ -189,9 +198,17 @@ class ScenarioGenerator:
 
         ref_pay = pilots[0].base_pay if pilots else 200
         airport_pool = [a for a in AIRPORTS if a["code"] != base]
+        b767_count = 0
 
         for p_idx in range(n):
-            aircraft_data = rng.choice(AIRCRAFT)
+            # Enforce B767 cap if specified
+            if max_b767 is not None and b767_count >= max_b767:
+                aircraft_data = next(a for a in AIRCRAFT if a["type"] == "B737")
+                _ = rng.choice(AIRCRAFT)  # consume RNG tick to keep seed deterministic
+            else:
+                aircraft_data = rng.choice(AIRCRAFT)
+            if aircraft_data["type"] == "B767":
+                b767_count += 1
             num_legs      = rng.choice([2, 3, 3, 4])   # weighted toward 3
             nights_away   = num_legs - 1
             start_dow     = rng.choice(DOW)
@@ -200,10 +217,15 @@ class ScenarioGenerator:
             stops = rng.sample(airport_pool, num_legs - 1)
             route = [base] + [s["code"] for s in stops] + [base]
 
-            # Build legs with realistic chained schedule
-            legs         = []
-            cur_day      = 1
-            cur_mins     = rng.randint(5, 13) * 60 + rng.choice([0, 15, 30, 45])
+            # Build legs with realistic chained schedule.
+            # First departure: morning bank (6:00–9:30 AM, 55%) or
+            # afternoon bank (2:00–6:00 PM, 45%), in 5-min slots.
+            legs     = []
+            cur_day  = 1
+            if rng.random() < 0.55:
+                cur_mins = round(rng.randint(360, 570) / 5) * 5   # 6:00–9:30 AM
+            else:
+                cur_mins = round(rng.randint(840, 1080) / 5) * 5  # 2:00–6:00 PM
 
             for leg_i in range(num_legs):
                 dep_code  = route[leg_i]
@@ -233,13 +255,19 @@ class ScenarioGenerator:
                     arr_time=_fmt_time(arr_mins_norm),
                 ))
 
-                # Next leg: overnight rest or short turnaround
+                # Next leg: overnight hotel departure or same-day turnaround
                 is_overnight = leg_i < nights_away
                 if is_overnight:
-                    cur_day  += 1
-                    cur_mins  = rng.randint(5, 10) * 60 + rng.choice([0, 15, 30])
+                    cur_day += 1
+                    # Hotel departure: 6:00–8:30 AM in 5-min slots
+                    cur_mins = round(rng.randint(360, 510) / 5) * 5
                 else:
-                    cur_mins  = arr_mins_raw + rng.randint(60, 150)
+                    # Same-day ground turn: B767 needs more time than B737
+                    if aircraft_data["type"] == "B767":
+                        turn = round(rng.randint(75, 120) / 5) * 5
+                    else:
+                        turn = round(rng.randint(50, 90) / 5) * 5
+                    cur_mins = arr_mins_raw + turn
 
             pairing = Pairing(
                 id=p_idx + 1,
@@ -255,3 +283,60 @@ class ScenarioGenerator:
             pairings.append(pairing)
 
         return pairings
+
+    # ------------------------------------------------------------------
+    # Lines
+    # ------------------------------------------------------------------
+
+    def build_lines(
+        self,
+        pairings: List[Pairing],
+        n_lines: int = 5,
+        pairings_per_line: int = 5,
+    ) -> List[Line]:
+        """
+        Group pairings into monthly lines.
+
+        Rules:
+        - Each pairing belongs to exactly one line.
+        - Uses the seeded pairing PRNG for reproducible shuffling.
+        - Raises ValueError if n_lines * pairings_per_line > len(pairings).
+
+        Args:
+            pairings:          Full list of pairings to distribute.
+            n_lines:           Number of lines to produce.
+            pairings_per_line: Pairings per line (must divide evenly).
+
+        Returns:
+            List of Line objects numbered 1..n_lines.
+        """
+        needed = n_lines * pairings_per_line
+        if needed > len(pairings):
+            raise ValueError(
+                f"Need {needed} pairings for {n_lines} lines × {pairings_per_line} "
+                f"pairings each, but only {len(pairings)} supplied."
+            )
+
+        # Sort B737 pairings before B767 pairings so that earlier lines
+        # are all-B737 — this guarantees B737-only pilots always have
+        # biddable options, which is a prerequisite for any valid allocation.
+        b737_pool = [p for p in pairings[:needed] if p.aircraft == "B737"]
+        b767_pool = [p for p in pairings[:needed] if p.aircraft != "B737"]
+
+        # Shuffle within each group with the seeded PRNG
+        rng = self._prng_pairing
+        for pool in (b737_pool, b767_pool):
+            for i in range(len(pool) - 1, 0, -1):
+                j = int(rng.random() * (i + 1))
+                pool[i], pool[j] = pool[j], pool[i]
+
+        # Rebuild sorted pool: B737 first, then B767
+        pool = b737_pool + b767_pool
+
+        lines: List[Line] = []
+        for line_idx in range(n_lines):
+            start = line_idx * pairings_per_line
+            line_pairings = pool[start : start + pairings_per_line]
+            lines.append(Line(id=line_idx + 1, pairings=line_pairings))
+
+        return lines

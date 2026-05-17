@@ -21,8 +21,8 @@ Note: There are no true "ties" in sequential seniority bidding.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-from models import AllocationResult, Pairing, Pilot, RankedPairing
-from oracle import oracle_rank_pilot
+from models import AllocationResult, Line, LLMLineRank, Pairing, Pilot, RankedLine, RankedPairing
+from oracle import oracle_rank_lines, oracle_rank_pilot
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +141,130 @@ def llm_allocation(
         ranked_by_pilot[pilot.id] = ordered_pairings
 
     return _run_allocation(pilots, ranked_by_pilot)
+
+
+# ---------------------------------------------------------------------------
+# Line-based allocation
+# ---------------------------------------------------------------------------
+
+def oracle_line_allocation(
+    pilots: List[Pilot],
+    lines: List[Line],
+) -> List[AllocationResult]:
+    """
+    Allocate monthly lines using oracle rankings as pilot preferences.
+
+    Rules are identical to pairing allocation:
+    - Pilots bid in seniority order (rank #1 bids first).
+    - Each pilot is awarded their highest-ranked AVAILABLE line they qualify for.
+    - Each line can only be awarded to one pilot.
+
+    Returns:
+        List[AllocationResult] with .line set and .pairing=None.
+    """
+    ordered = sorted(pilots, key=lambda p: p.seniority)
+    taken:   set             = set()
+    awarded_map: dict        = {}   # pilot.id → Line
+    results: List[AllocationResult] = []
+
+    for pilot in ordered:
+        ranked    = oracle_rank_lines(pilot, lines)
+        bumped_by: List[str] = []
+        awarded_line: Optional[Line] = None
+        rank_awarded: int = 0
+
+        for rank_idx, ranked_line in enumerate(ranked):
+            line      = ranked_line.line
+            qualified = ranked_line.qualified
+
+            if not qualified:
+                continue
+            if line.id not in taken:
+                awarded_line = line
+                awarded_map[pilot.id] = line
+                taken.add(line.id)
+                rank_awarded = rank_idx + 1
+                break
+            else:
+                taker = next(
+                    (f"Capt. {p.name} (#{p.seniority})"
+                     for p in ordered
+                     if awarded_map.get(p.id) and awarded_map[p.id].id == line.id),
+                    "another pilot",
+                )
+                bumped_by.append(f"L{line.id} taken by {taker}")
+
+        results.append(AllocationResult(
+            pilot=pilot,
+            pairing=None,
+            line=awarded_line,
+            rank_awarded=rank_awarded,
+            bumped_by=bumped_by,
+        ))
+
+    return results
+
+
+def llm_line_allocation(
+    pilots: List[Pilot],
+    lines: List[Line],
+    llm_rankings: dict,   # pilot.id → List[LLMLineRank]
+) -> List[AllocationResult]:
+    """
+    Allocate monthly lines using LLM rankings as pilot preferences.
+
+    Raises ValueError if any pilot is missing LLM rankings.
+
+    Returns:
+        List[AllocationResult] with .line set and .pairing=None.
+    """
+    missing = [p for p in pilots if p.id not in llm_rankings or not llm_rankings[p.id]]
+    if missing:
+        names = ", ".join(f"Capt. {p.name}" for p in missing)
+        raise ValueError(f"Missing LLM line rankings for: {names}")
+
+    line_map  = {ln.id: ln for ln in lines}
+    ordered   = sorted(pilots, key=lambda p: p.seniority)
+    taken:    set  = set()
+    awarded_map: dict = {}
+    results: List[AllocationResult] = []
+
+    for pilot in ordered:
+        llm_ranks     = sorted(llm_rankings[pilot.id], key=lambda r: r.rank)
+        bumped_by:    List[str] = []
+        awarded_line: Optional[Line] = None
+        rank_awarded: int = 0
+
+        for rank_idx, llm_rank in enumerate(llm_ranks):
+            line = line_map.get(llm_rank.line_id)
+            if line is None:
+                continue
+            if not llm_rank.eligible or not line.is_qualified(pilot):
+                continue
+            if line.id not in taken:
+                awarded_line = line
+                awarded_map[pilot.id] = line
+                taken.add(line.id)
+                rank_awarded = rank_idx + 1
+                break
+            else:
+                taker = next(
+                    (f"Capt. {p.name} (#{p.seniority})"
+                     for p in ordered
+                     if awarded_map.get(p.id) and awarded_map[p.id].id == line.id),
+                    "another pilot",
+                )
+                bumped_by.append(f"L{line.id} taken by {taker}")
+
+        results.append(AllocationResult(
+            pilot=pilot,
+            pairing=None,
+            line=awarded_line,
+            rank_awarded=rank_awarded,
+            bumped_by=bumped_by,
+        ))
+
+    return results
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ Mirrors the JavaScript buildPromptFromPairings() / buildPwPrompt() in the POC.
 """
 
 from typing import List
-from models import Pairing, Pilot
+from models import Line, Pairing, Pilot
 
 
 # ---------------------------------------------------------------------------
@@ -281,4 +281,255 @@ def scoring_prompt(pilot: Pilot, pairing: Pairing, anchor: str = "") -> str:
         "Reply ONLY with JSON (no markdown):\n"
         '{"score": <0-100>, "eligible": <true/false>, '
         '"shortReason": "<max 20 words>", "pros": ["...", "..."], "cons": ["...", "..."]}'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Line-level helpers
+# ---------------------------------------------------------------------------
+
+def _line_summary(pilot: Pilot, line: Line) -> str:
+    """
+    Full description of a monthly line for a prompt.
+    Shows aggregate stats then each constituent pairing.
+    """
+    qualified    = line.is_qualified(pilot)
+    qual_label   = "yes — all pairings within qualification" if qualified else "NO — pilot not qualified for one or more pairings"
+    conflict_lbl = "⚠ scheduling conflicts detected" if line.has_conflicts() else "no scheduling conflicts"
+    ac_str       = " + ".join(line.aircraft_types)
+    total_pay    = line.total_pay_for_pilot(pilot)
+    total_val    = line.total_trip_value_for_pilot(pilot)
+
+    # Compact per-pairing schedule: one row per pairing showing each leg's
+    # departure time and route, with overnight breaks marked.
+    sched_rows = []
+    for p in line.pairings:
+        leg_parts = []
+        for i, l in enumerate(p.legs):
+            leg_parts.append(f"Day{l.dep_day} {l.dep_time} {l.dep}→{l.arr} arr {l.arr_time}")
+            if i < len(p.legs) - 1 and p.legs[i + 1].dep_day > l.arr_day:
+                leg_parts.append("(hotel)")
+        sched_rows.append(f"    P{p.id} ({p.start_dow}): " + " | ".join(leg_parts))
+    schedule_block = "\n".join(sched_rows)
+
+    header = (
+        f"LINE {line.id} — monthly schedule summary\n"
+        f"  Aircraft types used:    {ac_str}\n"
+        f"  Qualified for all:      {qual_label}\n"
+        f"  Scheduling conflicts:   {conflict_lbl}\n"
+        f"  Total TAFB:             {line.total_tafb}h across {len(line.pairings)} pairings\n"
+        f"  Total nights away:      {line.total_nights_away} nights this month\n"
+        f"  Total block hours:      {line.total_block_hours}h\n"
+        f"  Total credit hours:     {line.total_credit_hours}h\n"
+        f"  Total block pay:        ${total_pay:,} ({line.total_credit_hours}h × ${pilot.base_pay}/hr)\n"
+        f"  Total per diem:         ${line.total_per_diem:,}\n"
+        f"  Total monthly value:    ${total_val:,}\n"
+        f"  Start days of week:     {', '.join(line.start_days)}\n"
+        f"  Cities visited:         {', '.join(line.cities)}\n"
+        f"  Flight schedule:\n{schedule_block}"
+    )
+
+    pairing_blocks = "\n\n".join(
+        f"  — Pairing {p.id} of Line {line.id} —\n"
+        + "\n".join("  " + ln for ln in _pairing_summary(pilot, p).splitlines())
+        for p in line.pairings
+    )
+
+    return header + "\n\n" + pairing_blocks
+
+
+# ---------------------------------------------------------------------------
+# Line-level anchor
+# ---------------------------------------------------------------------------
+
+def generate_line_anchor(pilot: Pilot) -> str:
+    """
+    Generate a calibration anchor string for independent line scoring.
+
+    Describes what a 0, 50, and 100 monthly schedule looks like for this
+    specific pilot.  Values are derived from oracle weights and profile.
+    """
+    w        = pilot.weights
+    ac       = pilot.preferred_type
+    high_pay = round(pilot.base_pay * 85 * 1.15)   # 15% above expected month
+    mid_pay  = round(pilot.base_pay * 85)            # baseline monthly
+    low_pay  = round(pilot.base_pay * 85 * 0.80)
+
+    if pilot.has_kids:
+        top_desc = (
+            f"all {ac} aircraft, total TAFB < 130h, 8–9 nights away, "
+            f"all reports after 8am, total monthly value > ${high_pay:,}"
+        )
+        mid_desc = (
+            f"mixed aircraft (some {ac}), total TAFB ~200h, 11–13 nights, "
+            f"some early reports, pay ~${mid_pay:,}/month"
+        )
+        low_desc = (
+            f"wrong aircraft throughout, total TAFB > 300h, 15+ nights away, "
+            f"multiple 4am reports, pay under ${low_pay:,}/month"
+        )
+    elif pilot.is_mid_career:
+        top_desc = (
+            f"mostly {ac} aircraft, TAFB < 150h, 10–12 nights, "
+            f"reports after 7am, monthly value > ${high_pay:,}"
+        )
+        mid_desc = (
+            f"mixed aircraft, TAFB ~200h, 12–14 nights, "
+            f"some early reports, pay ~${mid_pay:,}/month"
+        )
+        low_desc = (
+            f"wrong aircraft, TAFB > 300h, 15+ nights, "
+            f"many early-morning reports, low pay"
+        )
+    else:
+        top_desc = (
+            f"preferred {ac} aircraft, high monthly credit pay > ${high_pay:,}, "
+            f"varied international routes, reasonable report times"
+        )
+        mid_desc = (
+            f"mixed aircraft, moderate pay ~${mid_pay:,}/month, "
+            f"standard domestic schedule"
+        )
+        low_desc = (
+            f"disqualified aircraft, low pay, all very short hops, "
+            f"multiple early-morning reports"
+        )
+
+    return (
+        f"LINE SCORING ANCHOR — calibrated for Capt. {pilot.name}:\n"
+        f"  90–100 (ideal month):   {top_desc}\n"
+        f"  45–55  (acceptable):    {mid_desc}\n"
+        f"  0–15   (unacceptable):  {low_desc}\n"
+        f"  Weight priorities: TAFB ({w.tafb}%), hotel nights ({w.hotel_nights}%), "
+        f"report time ({w.report_time}%), aircraft ({w.aircraft}%), "
+        f"credit pay ({w.credit_pay}%)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Oracle line prompt (rank all N lines)
+# ---------------------------------------------------------------------------
+
+def oracle_line_prompt(pilot: Pilot, lines: List[Line]) -> str:
+    """
+    Prompt asking the LLM to rank all lines for a single pilot.
+
+    Each line is shown with its aggregate monthly statistics and a full
+    breakdown of the 5 constituent pairings.  The pilot is choosing their
+    entire month's flying, not a single trip.
+
+    Returns a string ready to send to any LLM.
+    """
+    line_blocks = "\n\n" + ("=" * 60) + "\n\n"
+    line_blocks = line_blocks.join(_line_summary(pilot, ln) for ln in lines)
+    n = len(lines)
+
+    return (
+        "You are simulating a commercial airline pilot choosing their monthly schedule.\n\n"
+        "Each option below is a COMPLETE MONTHLY LINE OF FLYING — a pre-assembled schedule\n"
+        "of multiple pairings representing the pilot's entire month.\n"
+        "The pilot bids on lines, NOT individual pairings.\n\n"
+        "== PILOT PROFILE ==\n"
+        f"{_pilot_profile(pilot)}\n\n"
+        "== HOW THIS PILOT PRIORITISES ==\n"
+        f"{_priority_list(pilot)}\n\n"
+        "== AIRCRAFT QUALIFICATION — HARD CONSTRAINT ==\n"
+        f"This pilot is qualified for: {', '.join(pilot.qualified_types)}.\n"
+        "Any line containing a pairing with an unqualified aircraft type "
+        "CANNOT be bid — mark eligible: false and rank last.\n\n"
+        "== AVAILABLE MONTHLY LINES ==\n"
+        f"{line_blocks}\n\n"
+        "== TASK ==\n"
+        f"Rank all {n} monthly lines from best (#1) to worst (#{n}) for THIS pilot only.\n"
+        "Consider the line as a complete monthly schedule — tradeoffs across all pairings matter.\n"
+        "Reply ONLY with a raw JSON array — no explanation, no markdown, no code fences.\n\n"
+        "[\n"
+        "  {\n"
+        '    "lineId": <number>,\n'
+        '    "rank": <1=best>,\n'
+        '    "eligible": <true if pilot qualifies for ALL pairings in this line>,\n'
+        '    "shortReason": "<max 30 words explaining this rank>",\n'
+        '    "pros": ["<pro 1>", "<pro 2>"],\n'
+        '    "cons": ["<con 1>", "<con 2>"]\n'
+        "  }\n"
+        "]"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Independent scoring line prompt
+# ---------------------------------------------------------------------------
+
+def independent_scoring_line_prompt(
+    pilot: Pilot,
+    line: Line,
+    anchor: str = "",
+) -> str:
+    """
+    Prompt asking the LLM to score a single monthly line (0–100) for a pilot.
+
+    Each call is independent — the LLM does NOT see other lines.
+    Scores are sorted externally to produce a ranking.
+
+    Args:
+        pilot:  The pilot being evaluated.
+        line:   The single monthly line to score.
+        anchor: Calibration string from generate_line_anchor(). If empty,
+                a generic 0/50/100 description is used instead.
+    """
+    anchor_block = anchor if anchor else (
+        "  100 = perfect month for this pilot\n"
+        "  50  = acceptable but mixed tradeoffs\n"
+        "  0   = unacceptable (unqualified aircraft, extreme TAFB, etc.)"
+    )
+
+    return (
+        "You are evaluating how well a monthly flying line fits a specific airline pilot's preferences.\n\n"
+        "A LINE is a complete monthly schedule of multiple pairings — "
+        "the pilot would fly ALL of these pairings this month.\n\n"
+        "== PILOT PROFILE ==\n"
+        f"{_pilot_profile(pilot)}\n\n"
+        "== HOW THIS PILOT PRIORITISES ==\n"
+        f"{_priority_list(pilot)}\n\n"
+        "== SCORING CALIBRATION ==\n"
+        f"{anchor_block}\n\n"
+        "== LINE TO EVALUATE ==\n"
+        f"{_line_summary(pilot, line)}\n\n"
+        "== TASK ==\n"
+        "Score this monthly line for this pilot on a scale of 0–100.\n"
+        "If the pilot is not qualified for any pairing in the line, score must be 0.\n\n"
+        "Reply ONLY with JSON (no markdown):\n"
+        '{"score": <0-100>, "eligible": <true/false>, '
+        '"shortReason": "<max 25 words>", "pros": ["...", "..."], "cons": ["...", "..."]}'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pairwise line prompt
+# ---------------------------------------------------------------------------
+
+def pairwise_line_prompt(pilot: Pilot, line_a: Line, line_b: Line) -> str:
+    """
+    Prompt asking the LLM to pick the better of two monthly lines for a pilot.
+
+    Returns a string ready to send to any LLM.
+    Output JSON: {"winner": <1 or 2>, "confidence": "...", "reason": "..."}
+    """
+    return (
+        "You are evaluating which of two monthly flying lines is better for a specific airline pilot.\n\n"
+        "Each option is a COMPLETE MONTHLY SCHEDULE — the pilot would fly ALL pairings in their chosen line.\n\n"
+        "== PILOT PROFILE ==\n"
+        f"{_pilot_profile(pilot)}\n\n"
+        "== HOW THIS PILOT PRIORITISES ==\n"
+        f"{_priority_list(pilot)}\n\n"
+        "IMPORTANT: Both lines listed below contain only pairings the pilot is qualified for.\n"
+        "Choose purely based on which line better fits this pilot's monthly preference profile.\n\n"
+        "== OPTION 1 — Monthly Line ==\n"
+        f"{_line_summary(pilot, line_a)}\n\n"
+        "== OPTION 2 — Monthly Line ==\n"
+        f"{_line_summary(pilot, line_b)}\n\n"
+        "== TASK ==\n"
+        "Which monthly line is better for this pilot? Reply ONLY with JSON (no markdown):\n"
+        '{"winner": <1 or 2>, "confidence": "<high|medium|low>", '
+        '"reason": "<max 50 words explaining the choice>"}'
     )

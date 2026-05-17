@@ -21,7 +21,7 @@ Note on ties:
 
 import math
 from typing import List, Optional, Tuple
-from models import EvalMetrics, LLMPairingRank, Pilot, RankedPairing
+from models import EvalMetrics, LLMLineRank, LLMPairingRank, Pilot, RankedLine, RankedPairing
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +194,83 @@ def pairwise_summary(comparisons: List[dict]) -> dict:
 # Scoring stability (independent scoring mode)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Line evaluation
+# ---------------------------------------------------------------------------
+
+def _line_spearman(
+    llm_ranking: List[LLMLineRank],
+    oracle_ranking: List[RankedLine],
+) -> float:
+    """Spearman ρ between LLM line ranking and oracle line ranking."""
+    oracle_map = {r.line.id: r.oracle_rank for r in oracle_ranking}
+    pairs: List[Tuple[int, int]] = []
+    for r in llm_ranking:
+        if r.line_id in oracle_map:
+            pairs.append((r.rank, oracle_map[r.line_id]))
+    n = len(pairs)
+    if n < 2:
+        return 0.0
+    llm_ranks = [p[0] for p in pairs]
+    ora_ranks  = [p[1] for p in pairs]
+    llm_mean  = sum(llm_ranks) / n
+    ora_mean  = sum(ora_ranks) / n
+    num   = sum((l - llm_mean) * (o - ora_mean) for l, o in zip(llm_ranks, ora_ranks))
+    den_l = math.sqrt(sum((l - llm_mean) ** 2 for l in llm_ranks))
+    den_o = math.sqrt(sum((o - ora_mean) ** 2 for o in ora_ranks))
+    if den_l == 0 or den_o == 0:
+        return 0.0
+    return round(num / (den_l * den_o), 2)
+
+
+def _line_top1(
+    llm_ranking: List[LLMLineRank],
+    oracle_ranking: List[RankedLine],
+) -> bool:
+    """True if LLM's top-ranked line matches oracle's top-ranked line."""
+    llm_top    = next((r for r in llm_ranking if r.rank == 1), None)
+    oracle_top = next((r for r in oracle_ranking if r.oracle_rank == 1), None)
+    if not llm_top or not oracle_top:
+        return False
+    return llm_top.line_id == oracle_top.line.id
+
+
+def _line_elig_accuracy(
+    llm_ranking: List[LLMLineRank],
+    oracle_ranking: List[RankedLine],
+) -> float:
+    """Fraction of lines where LLM correctly flagged eligibility."""
+    oracle_map = {r.line.id: r for r in oracle_ranking}
+    correct = 0
+    total   = 0
+    for r in llm_ranking:
+        if r.line_id not in oracle_map:
+            continue
+        if r.eligible == oracle_map[r.line_id].qualified:
+            correct += 1
+        total += 1
+    return correct / total if total > 0 else 0.0
+
+
+def evaluate_line_pilot(
+    pilot: Pilot,
+    llm_ranking: List[LLMLineRank],
+    oracle_ranking: List[RankedLine],
+) -> EvalMetrics:
+    """
+    Compute all evaluation metrics for a single pilot in line-bidding mode.
+
+    Uses the same metric definitions as evaluate_pilot() but operates on
+    line IDs instead of pairing IDs.  Returns EvalMetrics so all downstream
+    reporting code works unchanged.
+    """
+    sp   = _line_spearman(llm_ranking, oracle_ranking)
+    top1 = _line_top1(llm_ranking, oracle_ranking)
+    elig = _line_elig_accuracy(llm_ranking, oracle_ranking)
+    overall = round(((sp + 1) / 2 * 60) + (25 if top1 else 0) + (elig * 15))
+    return EvalMetrics(spearman=sp, top1_match=top1, elig_accuracy=elig, overall=overall)
+
+
 def evaluate_scoring_stability(scores: List[float]) -> dict:
     """
     Assess reliability of repeated independent scores for the same pilot+pairing.
@@ -222,13 +299,16 @@ def evaluate_scoring_stability(scores: List[float]) -> dict:
     std      = math.sqrt(variance)
     cv       = (std / mean * 100) if mean > 0 else 0.0
 
+    stability = "stable" if std < 5 else ("marginal" if std <= 10 else "unstable")
+
     return {
         "mean":                     round(mean, 1),
         "std":                      round(std, 1),
         "min":                      min(scores),
         "max":                      max(scores),
         "coefficient_of_variation": round(cv, 1),
-        "stable":                   std <= 10,
+        "stable":                   std <= 10,   # True for stable + marginal (backwards-compat)
+        "stability":                stability,   # "stable" | "marginal" | "unstable"
     }
 
 
