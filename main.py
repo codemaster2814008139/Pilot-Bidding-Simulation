@@ -800,6 +800,313 @@ def export_results(
 
 
 # ---------------------------------------------------------------------------
+# HTML report
+# ---------------------------------------------------------------------------
+
+def format_results_html(
+    pilots: List[Pilot],
+    pairings: List[Pairing],
+    oracle_rankings: dict,
+    llm_rankings: dict,
+    llm_line_rankings: dict,
+    oracle_line_rankings: dict,
+    eval_metrics: dict,
+    oracle_alloc: list,
+    llm_alloc: Optional[list],
+    llm_name: str,
+    config: dict,
+    schedule_lines: Optional[list] = None,
+    scored_lines_by_pilot: Optional[dict] = None,
+) -> str:
+    line_mode = bool(schedule_lines)
+    line_map  = {ln.id: ln for ln in (schedule_lines or [])}
+    ts        = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    oracle_alloc_map = {r.pilot.id: r for r in oracle_alloc}
+    llm_alloc_map    = {r.pilot.id: r for r in llm_alloc} if llm_alloc else {}
+
+    # oracle_line_rankings is keyed by pilot.name; convert to pilot.id
+    pilot_by_name = {p.name: p for p in pilots}
+    ora_line_by_pid: Dict[int, list] = {
+        pilot_by_name[name].id: ranked
+        for name, ranked in oracle_line_rankings.items()
+        if name in pilot_by_name
+    }
+
+    def esc(s) -> str:
+        return (str(s)
+                .replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace('"', "&quot;"))
+
+    # ── CSS ──────────────────────────────────────────────────────────────────
+    css = """<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:1300px;margin:2rem auto;padding:0 1.5rem;color:#222;line-height:1.5}
+h1{border-bottom:3px solid #2c3e50;padding-bottom:.4rem;margin-bottom:.3rem}
+h2{color:#2c3e50;margin-top:2.5rem;margin-bottom:.5rem}
+.meta{color:#555;font-size:.9rem;margin-bottom:2rem}
+table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.87rem}
+th{background:#2c3e50;color:#fff;padding:.5rem .8rem;text-align:left;white-space:nowrap}
+td{padding:.38rem .8rem;border-bottom:1px solid #e5e5e5;vertical-align:middle}
+tbody tr:hover td{background:#f4f8fb}
+.r-both td{background:#bbf7d0!important;font-weight:600}
+.r-llm td{background:#dcfce7!important;font-weight:600}
+.r-ora td{background:#dbeafe!important}
+.first{color:#16a34a;font-weight:700}
+.nth{color:#d97706}
+.inelig{color:#bbb;text-decoration:line-through}
+.m-yes{color:#16a34a}
+.m-no{color:#dc2626}
+details{border:1px solid #d1d5db;border-radius:6px;margin:.35rem 0}
+summary{padding:.65rem 1.1rem;cursor:pointer;background:#f9fafb;font-weight:600;
+        border-radius:6px;list-style:none;display:flex;align-items:center;gap:.5rem}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▶";font-size:.65rem;transition:transform .15s;flex-shrink:0}
+details[open]>summary::before{transform:rotate(90deg)}
+details[open]>summary{border-radius:6px 6px 0 0;border-bottom:1px solid #d1d5db}
+.inner{padding:.9rem 1.1rem;overflow-x:auto}
+.leg{font-size:.8rem;color:#555;margin:.15rem 0 .15rem 1rem}
+.swatch{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:3px;vertical-align:middle}
+</style>"""
+
+    # ── Allocation summary table ──────────────────────────────────────────────
+
+    def rank_badge(rank: int) -> str:
+        if rank == 1:
+            return '<span class="first">★ #1</span>'
+        return f'<span class="nth">#{rank}</span>' if rank else "—"
+
+    def summary_rows() -> str:
+        rows = []
+        for p in sorted(pilots, key=lambda x: x.seniority):
+            ora_r = oracle_alloc_map.get(p.id)
+            llm_r = llm_alloc_map.get(p.id)
+            ora_item = (ora_r.line if (ora_r and ora_r.line) else
+                        (ora_r.pairing if ora_r else None))
+            llm_item = (llm_r.line if (llm_r and llm_r.line) else
+                        (llm_r.pairing if llm_r else None))
+
+            ora_id   = f"L{ora_item.id}" if ora_item else "—"
+            llm_id   = f"L{llm_item.id}" if llm_item else ("—" if llm_alloc else "<em>N/A</em>")
+            ora_rank = rank_badge(ora_r.rank_awarded if ora_r else 0)
+            llm_rank = rank_badge(llm_r.rank_awarded if llm_r else 0) if llm_alloc else "<em>N/A</em>"
+
+            same = ora_item and llm_item and ora_item.id == llm_item.id
+            match = ('<span class="m-yes">✓ same</span>' if same else
+                     '<span class="m-no">✗ diff</span>' if (ora_item and llm_item) else "—")
+
+            if line_mode and ora_item:
+                details_str = (f"{ora_item.total_credit_hours}h credit &nbsp;·&nbsp; "
+                               f"{ora_item.total_nights_away} nights &nbsp;·&nbsp; "
+                               f"{' / '.join(ora_item.aircraft_types)}")
+            elif not line_mode and ora_item:
+                route = "→".join(l.dep for l in ora_item.legs) + f"→{ora_item.legs[-1].arr}"
+                details_str = f"{ora_item.credit_hours}h &nbsp;·&nbsp; {ora_item.nights_away} nights &nbsp;·&nbsp; {route}"
+            else:
+                details_str = "—"
+
+            # bumped info
+            bumped = ""
+            if ora_r and ora_r.bumped_by:
+                bumped = f'<br><small style="color:#888">bumped from: {esc(", ".join(ora_r.bumped_by))}</small>'
+
+            rows.append(
+                f"<tr>"
+                f"<td>#{p.seniority}</td>"
+                f"<td><strong>{esc(p.name)}</strong><br>"
+                f"<small>{esc('/'.join(p.qualified_types))}, pref: {esc(p.preferred_type)}</small></td>"
+                f"<td>{ora_id}{bumped}</td>"
+                f"<td>{ora_rank}</td>"
+                f"<td>{llm_id}</td>"
+                f"<td>{llm_rank}</td>"
+                f"<td>{match}</td>"
+                f"<td>{details_str}</td>"
+                f"</tr>"
+            )
+        return "\n".join(rows)
+
+    summary_html = f"""
+<h2>Allocation Summary</h2>
+<table>
+  <thead><tr>
+    <th>Snr</th><th>Pilot</th>
+    <th>Oracle — Assigned</th><th>Oracle Rank</th>
+    <th>LLM — Assigned</th><th>LLM Rank</th>
+    <th>Match?</th><th>Details</th>
+  </tr></thead>
+  <tbody>{summary_rows()}</tbody>
+</table>"""
+
+    # ── Per-pilot ranking toggles (line mode only) ────────────────────────────
+
+    def pilot_toggle(pilot: Pilot) -> str:
+        ora_r        = oracle_alloc_map.get(pilot.id)
+        llm_r        = llm_alloc_map.get(pilot.id)
+        ora_assigned = (ora_r.line.id if (ora_r and ora_r.line) else
+                        (ora_r.pairing.id if (ora_r and ora_r.pairing) else None))
+        llm_assigned = (llm_r.line.id if (llm_r and llm_r.line) else
+                        (llm_r.pairing.id if (llm_r and llm_r.pairing) else None))
+
+        # Build per-line lookup dicts
+        ora_ranked   = ora_line_by_pid.get(pilot.id, [])
+        ora_rank_map  = {r.line.id: r.oracle_rank  for r in ora_ranked}
+        ora_score_map = {r.line.id: r.oracle_score for r in ora_ranked}
+
+        llm_ranked    = llm_line_rankings.get(pilot.id, [])
+        llm_rank_map  = {r.line_id: r.rank         for r in llm_ranked}
+        llm_elig_map  = {r.line_id: r.eligible     for r in llm_ranked}
+        llm_reason_map = {r.line_id: r.short_reason for r in llm_ranked}
+
+        scored_map: dict = {}
+        if scored_lines_by_pilot:
+            for sr in scored_lines_by_pilot.get(pilot.id, []):
+                scored_map[sr.line.id] = sr
+
+        # Order rows by LLM rank, then oracle rank, then line id
+        if llm_ranked:
+            ordered_ids = [r.line_id for r in sorted(llm_ranked, key=lambda x: x.rank)]
+        elif ora_ranked:
+            ordered_ids = [r.line.id for r in sorted(ora_ranked, key=lambda x: x.oracle_rank)]
+        else:
+            ordered_ids = sorted(line_map.keys())
+
+        rows = []
+        for lid in ordered_ids:
+            ln = line_map.get(lid)
+            if not ln:
+                continue
+
+            llm_rank  = llm_rank_map.get(lid)
+            ora_rank  = ora_rank_map.get(lid)
+            eligible  = llm_elig_map.get(lid, True)
+            reason    = esc(llm_reason_map.get(lid, ""))
+
+            is_ora = (lid == ora_assigned)
+            is_llm = (lid == llm_assigned)
+            row_cls = ("r-both" if (is_ora and is_llm) else
+                       "r-llm"  if is_llm else
+                       "r-ora"  if is_ora else "")
+
+            llm_cell = (rank_badge(llm_rank) if llm_rank is not None else "—")
+            ora_cell = (rank_badge(ora_rank) if ora_rank is not None else "—")
+
+            tags = []
+            if is_llm and is_ora:
+                tags.append("← LLM &amp; Oracle assigned")
+            elif is_llm:
+                tags.append("← LLM assigned")
+            elif is_ora:
+                tags.append("← Oracle assigned")
+            tag_str = f' &nbsp;<small style="color:#555">{" ".join(tags)}</small>' if tags else ""
+
+            # Score column (scoring mode)
+            score_cell = ""
+            if scored_map and lid in scored_map:
+                sr = scored_map[lid]
+                icon = {"stable": "✓", "marginal": "~", "unstable": "⚠"}.get(sr.stability, "")
+                score_cell = f"<td>{sr.score_mean:.0f} ± {sr.score_std:.1f} {icon}</td>"
+            elif scored_lines_by_pilot:
+                score_cell = "<td>—</td>"
+
+            inelig_style = ' style="color:#bbb;text-decoration:line-through"' if not eligible else ""
+
+            # Compact pairing list for the line
+            pairing_ids = "  ".join(f"P{p.id}({p.start_dow})" for p in ln.pairings)
+
+            rows.append(
+                f'<tr class="{row_cls}">'
+                f"<td>{llm_cell}</td>"
+                f"<td>{ora_cell}</td>"
+                f'<td{inelig_style}><strong>L{lid}</strong>{tag_str}</td>'
+                f"<td>{ln.total_credit_hours}h</td>"
+                f"<td>{ln.total_nights_away}</td>"
+                f"<td>{esc(' / '.join(ln.aircraft_types))}</td>"
+                f"<td>{reason}</td>"
+                f"<td><small>{esc(pairing_ids)}</small></td>"
+                f"{score_cell}"
+                f"</tr>"
+            )
+
+        m = eval_metrics.get(pilot.id)
+        eval_str = ""
+        if m:
+            top1 = "✓" if m.top1_match else "✗"
+            eval_str = (f"&nbsp;·&nbsp; ρ={m.spearman} &nbsp; top-1={top1} &nbsp;"
+                        f" elig={m.elig_accuracy:.0%}")
+
+        score_th = "<th>Score (mean±std)</th>" if scored_lines_by_pilot else ""
+        score_col_html = score_th
+
+        return f"""<details>
+<summary>
+  <span>#{pilot.seniority} &nbsp; Capt. {esc(pilot.name)}</span>
+  <span style="font-weight:400;color:#555">&nbsp;·&nbsp; {esc('/'.join(pilot.qualified_types))}, pref: {esc(pilot.preferred_type)}{eval_str}</span>
+</summary>
+<div class="inner">
+<p style="font-size:.82rem;color:#555;margin:.2rem 0 .6rem">
+  <span class="swatch" style="background:#bbf7d0"></span>Both oracle &amp; LLM assigned &nbsp;
+  <span class="swatch" style="background:#dcfce7"></span>LLM assigned &nbsp;
+  <span class="swatch" style="background:#dbeafe"></span>Oracle assigned
+</p>
+<table>
+  <thead><tr>
+    <th>LLM Rank</th><th>Oracle Rank</th><th>Line</th>
+    <th>Credit Hrs</th><th>Nights Away</th><th>Aircraft</th>
+    <th>LLM Reason</th><th>Pairings</th>{score_col_html}
+  </tr></thead>
+  <tbody>{"".join(rows)}</tbody>
+</table>
+</div>
+</details>"""
+
+    pilot_toggles = ""
+    if line_mode:
+        pilot_toggles = (
+            "<h2>Per-Pilot Line Rankings</h2>"
+            "<p style='color:#555;font-size:.9rem;margin-bottom:.8rem'>"
+            "Click a pilot to expand their full ranked list of lines. "
+            "Rows are ordered by LLM preference rank (best first).</p>"
+            + "\n".join(
+                pilot_toggle(p)
+                for p in sorted(pilots, key=lambda x: x.seniority)
+            )
+        )
+
+    # ── Scenario header ───────────────────────────────────────────────────────
+    if line_mode:
+        scenario = (
+            f"{config['n_pilots']} pilots &nbsp;·&nbsp; "
+            f"{config.get('n_lines','?')} lines × {config.get('pairings_per_line','?')} pairings/line"
+            f" &nbsp;·&nbsp; Base: {config['base']} &nbsp;·&nbsp; Mode: line"
+        )
+    else:
+        scenario = (
+            f"{config['n_pilots']} pilots &nbsp;·&nbsp; "
+            f"{config['n_pairings']} pairings"
+            f" &nbsp;·&nbsp; Base: {config['base']} &nbsp;·&nbsp; Mode: pairing"
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pilot Bidding Results</title>
+{css}
+</head>
+<body>
+<h1>Pilot Bidding Results</h1>
+<div class="meta">
+  <strong>LLM:</strong> {esc(llm_name)} &nbsp;&nbsp;
+  <strong>Exported:</strong> {ts} &nbsp;&nbsp;
+  <strong>Scenario:</strong> {scenario}
+</div>
+{summary_html}
+{pilot_toggles}
+</body>
+</html>"""
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -834,7 +1141,7 @@ def main():
         "--consistency-runs", type=int, default=2,
         help="Independent scoring runs per pilot×line in scoring+lines mode (default: 2)",
     )
-    parser.add_argument("--output",   default="results.json", help="Output file")
+    parser.add_argument("--output",   default="results.html", help="Output file")
     args = parser.parse_args()
 
     config = {
@@ -895,6 +1202,7 @@ def main():
 
     # 3. Get LLM rankings
     scored_lines_by_pilot: dict = {}
+    llm_line_rankings:     dict = {}   # populated only in line mode
     if args.mode == "scoring":
         if not args.auto:
             print("\nScoring mode requires --auto (API key needed for parallel calls).")
@@ -1067,15 +1375,16 @@ def main():
                 print(f"  ⚠ LLM allocation skipped: {e}")
 
     # Export
-    results = export_results(
+    report = format_results_html(
         pilots, pairings, oracle_rankings,
-        llm_rankings, eval_metrics,
-        oracle_alloc, llm_alloc,
+        llm_rankings, llm_line_rankings, oracle_line_rankings,
+        eval_metrics, oracle_alloc, llm_alloc,
         config["llm_name"], config,
+        schedule_lines=lines if args.lines else None,
         scored_lines_by_pilot=scored_lines_by_pilot,
     )
-    with open(args.output, "w") as f:
-        json.dump(results, f, indent=2)
+    with open(args.output, "w", encoding="utf-8") as f:
+        f.write(report)
     print(f"\n✓ Results exported to {args.output}")
 
 

@@ -158,7 +158,7 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 <body>
 <div class="wrap">
 <h1>Pilot pairing bidding — POC</h1>
-<p class="tagline">// 3 pilots · 20 monthly lines (100 pairings) · BOS base · Oracle ground truth always from weights · LLM tests: compare all at once · pairwise · scoring</p>
+<p class="tagline">// 5 pilots · 20 monthly lines (100 pairings) · BOS base · Oracle ground truth always from weights · LLM tests: compare all at once · pairwise · scoring</p>
 
 <div class="card" id="backendCard" style="background:#f8fafc;border-color:#e2e8f0;margin-bottom:1.5rem">
   <div class="card-title" style="color:#374151">Backend LLM proxy</div>
@@ -186,7 +186,7 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 <div class="panel active" id="tab-setup">
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <div class="card-title" style="margin-bottom:0" id="setupPilotsTitle">3 pilot profiles</div>
+      <div class="card-title" style="margin-bottom:0" id="setupPilotsTitle">5 pilot profiles</div>
       <div style="display:flex;gap:8px;align-items:center">
         <span style="font-size:11px;font-family:monospace;color:#888">Bidding unit:</span>
         <button type="button" class="btn sm" id="lineModeBtn" onclick="toggleLineMode()" style="font-size:11px">Switch to pairing mode →</button>
@@ -273,8 +273,10 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
       <div id="weightSliders"></div>
       <div class="weight-total" id="weightTotal"></div>
     </div>
-    <div class="card-title" style="margin-bottom:8px" id="oraclePairingsTitle">Oracle pairing ranking for this pilot</div>
-    <div class="pairing-grid" id="oraclePairings"></div>
+    <div id="oraclePairingsSection" style="display:none">
+      <div class="card-title" style="margin-bottom:8px">Oracle pairing ranking for this pilot</div>
+      <div class="pairing-grid" id="oraclePairings"></div>
+    </div>
     <div id="oracleLinesSection">
       <div class="card-title" style="margin-bottom:8px">Oracle line ranking for this pilot <span class="line-mode-badge">LINE MODE</span></div>
       <div class="line-grid" id="oracleLines"></div>
@@ -312,7 +314,7 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
   <!-- MODE A: Compare all at once (LLM ranks full list vs oracle weights) -->
   <div id="mode-rankall">
     <div class="progress-wrap"><div class="progress-bar" id="evalBar" style="width:0%"></div></div>
-    <div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:1rem" id="evalProgressLabel">0 / 3 pilots scored</div>
+    <div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:1rem" id="evalProgressLabel">0 / 5 pilots scored</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
       <button type="button" class="btn primary" id="runAllBtn" onclick="runAllPilotsBackend()">Run all pilots with backend LLM →</button>
       <button type="button" class="btn sm" id="stopRunBtn" onclick="stopAutoRun()" style="display:none">■ Stop</button>
@@ -560,7 +562,7 @@ const DIST = {
 function getDist(a,b){return(DIST[a]&&DIST[a][b])||rand(300,1800);}
 
 const AIRCRAFT=[{type:'B737',label:'Boeing 737',spd:480},{type:'B767',label:'Boeing 767',spd:520}];
-const N_PILOTS   = 3;
+const N_PILOTS   = 5;
 const N_PAIRINGS = 10;
 const PILOT_NAMES_ALL=['Alex Carter','Jordan Lee','Sam Rivera','Morgan Kim','Taylor Brooks','Casey Walsh','Dana Okafor','Reese Tanaka','Quinn Patel','Avery Santos'];
 const PILOT_NAMES=PILOT_NAMES_ALL.slice(0,N_PILOTS);
@@ -619,7 +621,7 @@ function blockMins(dist,spd){
 /* ══════════════════════════════════════════
    STATE
 ══════════════════════════════════════════ */
-let pilots=[], pairings=[], activePilot={oracle:0,prompt:0,eval:0}, log=[];
+let pilots=[], pairings=[], activePilot={setup:0,oracle:0,prompt:0,eval:0}, log=[];
 let lineMode=true, lines=[], linePairings=[];
 const N_LINES=20, PAIRINGS_PER_LINE=5;
 
@@ -631,19 +633,27 @@ const W_LABELS={tafb:'TAFB (time away)',hotelNights:'Hotel nights away',reportTi
 ══════════════════════════════════════════ */
 function buildPilots(randomise){
   resetPilotSeed(randomise ? (Date.now()&0xFFFFFFFF) : 1234567);
+
+  // Guarantee a mix: exactly 2 dual-qualified (B737+B767), rest B737-only, shuffled
+  const n = PILOT_NAMES.length;
+  const nDual = Math.min(2, n);
+  const qualArr = Array(nDual).fill(true).concat(Array(n - nDual).fill(false));
+  for(let i = qualArr.length - 1; i > 0; i--){
+    const j = rand(0, i);
+    [qualArr[i], qualArr[j]] = [qualArr[j], qualArr[i]];
+  }
+
   pilots = PILOT_NAMES.map((name,i)=>{
     const age = rand(26,58);
     const family = FAMILY_OPTIONS[i % FAMILY_OPTIONS.length];
     const hasKids = family.includes('child')||family.includes('kids')||family.includes('parent');
     const midPlus = age >= 40;
-    const wideQual = Math.random() > 0.35;
+    const wideQual = qualArr[i];
 
-    // auto-weight from demographics — reportTime replaces depTime
     const hotelW  = hasKids ? 26 : midPlus ? 16 : 9;
     const tafbW   = hasKids ? 22 : midPlus ? 15 : 9;
-    const reportW = 12; // report time weight (fixed — commute removed)
+    const reportW = 12;
     const rem = 100 - hotelW - tafbW - reportW;
-    // Distribute remainder fully between aircraft and credit pay
     const w = {
       tafb:        tafbW,
       hotelNights: hotelW,
@@ -651,14 +661,14 @@ function buildPilots(randomise){
       aircraft:    Math.round(rem * 0.35),
       creditPay:   0,
     };
-    w.creditPay = 100 - w.tafb - w.hotelNights - w.reportTime - w.aircraft; // remainder
+    w.creditPay = 100 - w.tafb - w.hotelNights - w.reportTime - w.aircraft;
 
     return {
-      id:i, name, age, family,
+      id:i, name, age, family, hasKids,
       seniority: i+1,
       homeBase: 'BOS',
       qualifiedTypes: wideQual ? ['B737','B767'] : ['B737'],
-      preferredType:  wideQual && Math.random()>0.5 ? 'B767' : 'B737',
+      preferredType:  wideQual && rand(0,1) ? 'B767' : 'B737',
       minRest: rand(10,14),
       basePay: rand(180,260),
       weights: {...w},
@@ -928,8 +938,15 @@ function renderRoster(containerId, clickFn, activeId){
 /* ══════════════════════════════════════════
    TAB 1 — SETUP
 ══════════════════════════════════════════ */
+function selectSetupPilot(id){
+  activePilot.setup = id;
+  renderRoster('setupRoster','selectSetupPilot',id);
+  renderSetupLines();
+}
 function renderSetup(){
-  renderRoster('setupRoster','noop',null);
+  const titleEl = document.getElementById('setupPilotsTitle');
+  if(titleEl) titleEl.textContent = pilots.length + ' pilot profiles';
+  renderRoster('setupRoster','selectSetupPilot',activePilot.setup);
   document.getElementById('setupPairings').innerHTML =
     pairings.map(pair=>pairingCard({...pair,eligible:true,qualified:true,oScore:0,oRank:0})).join('');
 }
@@ -967,6 +984,7 @@ function refreshWeights(pid){
   W_KEYS.forEach(k=>{const el=document.getElementById('wv-'+k);if(el)el.textContent=p.weights[k];});
   updateWeightTotal(p);
   document.getElementById('oraclePairings').innerHTML=oracleRankPilot(p).map(pair=>pairingCard(pair,true)).join('');
+  if(lineMode) renderOracleLines();
 }
 function updateWeightTotal(p){
   const total=W_KEYS.reduce((s,k)=>s+p.weights[k],0);
@@ -1606,7 +1624,7 @@ function scoreSensitivity(){
 /* ── MODE B: Pairwise ── */
 /* ── Pairwise round-robin state ── */
 let rrPilotId   = null;
-let rrPairs     = [];   // [{idA, idB}, ...]  — all 3 combos
+let rrPairs     = [];   // [{idA, idB}, ...]  — all C(n,2) combos for qualified pairings
 let rrStep      = 0;    // which comparison we're on
 let rrResults   = [];   // submitted results for this round
 
@@ -1620,16 +1638,28 @@ function populatePwSelects(){
 function startRoundRobin(){
   rrPilotId = +document.getElementById('pwPilot').value;
   const pilot = pilots[rrPilotId];
-  // Only include pairings this pilot is qualified for
-  const qualifiedPairings = pairings.filter(p=>pilot.qualifiedTypes.includes(p.aircraft));
-  if(qualifiedPairings.length < 2){
-    alert('This pilot is only qualified for '+qualifiedPairings.length+' pairing(s) — need at least 2 for pairwise comparison.');
-    return;
-  }
   rrPairs = [];
-  for(let i=0;i<qualifiedPairings.length;i++)
-    for(let j=i+1;j<qualifiedPairings.length;j++)
-      rrPairs.push({idA:qualifiedPairings[i].id, idB:qualifiedPairings[j].id});
+  if(lineMode){
+    // In line mode: pair up all qualified lines
+    const qualifiedLines = lines.filter(ln=>lineQualified(pilot, ln));
+    if(qualifiedLines.length < 2){
+      alert('This pilot is only qualified for '+qualifiedLines.length+' line(s) — need at least 2 for pairwise comparison.');
+      return;
+    }
+    for(let i=0;i<qualifiedLines.length;i++)
+      for(let j=i+1;j<qualifiedLines.length;j++)
+        rrPairs.push({idA:qualifiedLines[i].id, idB:qualifiedLines[j].id});
+  } else {
+    // In pairing mode: pair up all qualified pairings
+    const qualifiedPairings = pairings.filter(p=>pilot.qualifiedTypes.includes(p.aircraft));
+    if(qualifiedPairings.length < 2){
+      alert('This pilot is only qualified for '+qualifiedPairings.length+' pairing(s) — need at least 2 for pairwise comparison.');
+      return;
+    }
+    for(let i=0;i<qualifiedPairings.length;i++)
+      for(let j=i+1;j<qualifiedPairings.length;j++)
+        rrPairs.push({idA:qualifiedPairings[i].id, idB:qualifiedPairings[j].id});
+  }
   rrStep    = 0;
   rrResults = [];
   document.getElementById('rrStepper').style.display = 'block';
@@ -1672,33 +1702,91 @@ function buildPwPrompt(pilot, pA, pB){
     '{"winner": <1 or 2>, "confidence": "<high|medium|low>", "reason": "<max 40 words>"}';
 }
 
+function buildLinePwPrompt(pilot, lineA, lineB){
+  var NL = '\n';
+  function lineSummary(ln, label){
+    var qualified = lineQualified(pilot, ln);
+    var acTypes   = lineAircraftTypes(ln).join(', ');
+    var creditH   = lineTotalCreditHours(ln);
+    var nights    = lineTotalNightsAway(ln);
+    var tafb      = lineTotalTafb(ln);
+    var perDiem   = lineTotalPerDiem(ln);
+    var pay       = linePayForPilot(pilot, ln);
+    var totalVal  = pay + perDiem;
+    var pairRows  = ln.pairings.map(function(p, idx){
+      var route = p.legs.map(function(l){ return l.from||l.dep; }).concat([p.legs[p.legs.length-1].to||p.legs[p.legs.length-1].arr]).join('\u2192');
+      return '    Pairing '+(idx+1)+' (ID '+p.id+'): '+p.aircraft+' \u00b7 '+p.nightsAway+'n away \u00b7 Credit '+p.creditHours+'h \u00b7 TAFB '+p.tafb+'h \u00b7 Route: '+route;
+    }).join(NL);
+    return label+' — Line '+ln.id+NL+
+      '  Aircraft types: '+acTypes+NL+
+      '  Qualified: '+(qualified?'yes':'NO — disqualified')+NL+
+      '  Monthly totals: Credit '+creditH+'h \u00b7 '+nights+' nights away \u00b7 TAFB '+tafb+'h'+NL+
+      '  Monthly pay: $'+pay.toLocaleString()+' + per diem $'+perDiem.toLocaleString()+' = $'+totalVal.toLocaleString()+NL+
+      '  Pairings:'+NL+pairRows;
+  }
+  var hasKids = pilot.family.includes('child')||pilot.family.includes('kids')||pilot.family.includes('parent');
+  var profile  = hasKids
+    ? 'Has children \u2014 values short total TAFB, fewer nights away, reasonable schedule.'
+    : pilot.age>=40 ? 'Mid-career \u2014 balances home-time and pay.' : 'Early career \u2014 prioritises pay and aircraft type.';
+  return 'You are evaluating which of two monthly flight LINES is better for a specific airline pilot.'+NL+
+    'A line is a full month\'s schedule made up of multiple pairings.'+NL+NL+
+    'PILOT: Capt. '+pilot.name+' | Age '+pilot.age+' | '+pilot.family+NL+
+    'Home base: BOS | Qualified aircraft: '+pilot.qualifiedTypes.join(', ')+' | Prefers: '+pilot.preferredType+NL+
+    'Pay rate: $'+pilot.basePay+'/hr on credit hours'+NL+
+    profile+NL+NL+
+    lineSummary(lineA, 'OPTION 1')+NL+NL+
+    lineSummary(lineB, 'OPTION 2')+NL+NL+
+    'If a line contains pairings the pilot is not qualified for, it must be ranked last.'+NL+
+    'Otherwise choose based on which monthly schedule better fits this pilot\'s preference profile.'+NL+NL+
+    'Reply ONLY with JSON (no markdown):'+NL+
+    '{"winner": <1 or 2>, "confidence": "<high|medium|low>", "reason": "<max 40 words>"}';
+}
+
 function showRRStep(){
-  const pair   = rrPairs[rrStep];
-  const pilot  = pilots[rrPilotId];
-  const pA     = pairings.find(p=>p.id===pair.idA);
-  const pB     = pairings.find(p=>p.id===pair.idB);
-  const oracle = oracleRankPilot(pilot);
-  const oA     = oracle.find(p=>p.id===pair.idA);
-  const oB     = oracle.find(p=>p.id===pair.idB);
-  const oWinner      = oA.oRank < oB.oRank ? pair.idA : pair.idB;
-  const oracleDiff   = Math.abs(oA.oScore - oB.oScore);
-  const prompt = buildPwPrompt(pilot, pA, pB);
+  const pair  = rrPairs[rrStep];
+  const pilot = pilots[rrPilotId];
+  let oWinner, oracleDiff, prompt, cardTitle, oracleNote;
+
+  if(lineMode){
+    const lA      = lines.find(l=>l.id===pair.idA);
+    const lB      = lines.find(l=>l.id===pair.idB);
+    const oracle  = oracleRankLines(pilot, lines);
+    const oA      = oracle.find(r=>r.line.id===pair.idA);
+    const oB      = oracle.find(r=>r.line.id===pair.idB);
+    oWinner       = oA.rank < oB.rank ? pair.idA : pair.idB;
+    oracleDiff    = Math.abs(oA.score - oB.score);
+    prompt        = buildLinePwPrompt(pilot, lA, lB);
+    cardTitle     = 'Comparison '+(rrStep+1)+' of '+rrPairs.length+': Line '+pair.idA+' vs Line '+pair.idB+' — Capt. '+pilot.name;
+    oracleNote    = '<strong>Oracle verdict:</strong> Line '+oWinner+' wins ('+oA.score+'pts vs '+oB.score+'pts, gap='+oracleDiff+'pts). '+(oracleDiff<8?'⚠ Very close.':'');
+  } else {
+    const pA      = pairings.find(p=>p.id===pair.idA);
+    const pB      = pairings.find(p=>p.id===pair.idB);
+    const oracle  = oracleRankPilot(pilot);
+    const oA      = oracle.find(p=>p.id===pair.idA);
+    const oB      = oracle.find(p=>p.id===pair.idB);
+    oWinner       = oA.oRank < oB.oRank ? pair.idA : pair.idB;
+    oracleDiff    = Math.abs(oA.oScore - oB.oScore);
+    prompt        = buildPwPrompt(pilot, pA, pB);
+    cardTitle     = 'Comparison '+(rrStep+1)+' of '+rrPairs.length+': Pairing '+pair.idA+' vs Pairing '+pair.idB+' — Capt. '+pilot.name;
+    oracleNote    = '<strong>Oracle verdict:</strong> Pairing '+oWinner+' wins ('+oA.oScore+'pts vs '+oB.oScore+'pts, gap='+oracleDiff+'pts). '+(oracleDiff<8?'⚠ Very close.':'');
+  }
 
   // Progress dots
+  const itemLabel = lineMode ? 'L' : 'P';
   document.getElementById('rrProgress').innerHTML = rrPairs.map((pr,i)=>{
     const done = i < rrStep;
     const active = i === rrStep;
     return '<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-family:monospace;padding:4px 10px;border-radius:6px;border:1px solid '+(done?'#16a34a':active?'#2563eb':'#e2e8f0')+';background:'+(done?'#f0fdf4':active?'#eff6ff':'#f8fafc')+';color:'+(done?'#16a34a':active?'#2563eb':'#888')+'">'+
-      (done?'✓ ':'')+'P'+pr.idA+' vs P'+pr.idB+'</div>';
+      (done?'✓ ':'')+itemLabel+pr.idA+' vs '+itemLabel+pr.idB+'</div>';
   }).join('');
 
-  document.getElementById('rrCardTitle').textContent = 'Comparison '+(rrStep+1)+' of '+rrPairs.length+': Pairing '+pair.idA+' vs Pairing '+pair.idB+' — Capt. '+pilot.name;
-  document.getElementById('pwOracleNote').innerHTML = '<strong>Oracle verdict:</strong> Pairing '+oWinner+' wins ('+oA.oScore+'pts vs '+oB.oScore+'pts, gap='+oracleDiff+'pts). '+(oracleDiff<8?'⚠ Very close.':'');
+  document.getElementById('rrCardTitle').textContent = cardTitle;
+  document.getElementById('pwOracleNote').innerHTML  = oracleNote;
   document.getElementById('pwPromptText').textContent = prompt;
   document.getElementById('pwPaste').value = '';
   document.getElementById('pwErr').textContent = '';
 
-  window._pwCurrent = {pilotId:rrPilotId, idA:pair.idA, idB:pair.idB, oracleWinner:oWinner, oA, oB, oracleDiff, prompt};
+  window._pwCurrent = {pilotId:rrPilotId, idA:pair.idA, idB:pair.idB, oracleWinner:oWinner, oracleDiff, prompt};
 }
 
 function copyPwPrompt(){
@@ -1736,46 +1824,43 @@ function submitRRResponse(){
 function renderRoundRobinResult(){
   const pilot = pilots[rrPilotId];
 
-  // Count LLM wins per pairing
-  const llmWins = {};
-  pairings.forEach(p=>llmWins[p.id]=0);
+  // Build the item list (lines or pairings) and oracle score map
+  const items       = lineMode ? lines : pairings;
+  const itemLabel   = lineMode ? 'Line ' : 'Pairing ';
+  const shortLabel  = lineMode ? 'L' : 'P';
+  const llmWins     = {};
+  items.forEach(it=>llmWins[it.id]=0);
   rrResults.forEach(r=>llmWins[r.llmWinner]++);
 
-  // Count oracle wins per pairing
-  const oraWins = {};
-  pairings.forEach(p=>oraWins[p.id]=0);
-  rrResults.forEach(r=>oraWins[r.oracleWinner]++);
-
-  // Sort by wins (desc) to get rankings
-  const llmRanked  = [...pairings].sort((a,b)=>llmWins[b.id]-llmWins[a.id]);
-  // Use actual oracle scores (not win counts) to avoid tie-order artifacts
+  // Oracle scores and ranking
   const oracleScoresRR = {};
-  oracleRankPilot(pilot).forEach(r=>{ oracleScoresRR[r.id]=r.oScore; });
-  const oraRanked  = [...pairings].sort((a,b)=>(oracleScoresRR[b.id]||0)-(oracleScoresRR[a.id]||0));
+  if(lineMode){
+    oracleRankLines(pilot, lines).forEach(r=>{ oracleScoresRR[r.line.id]=r.score; });
+  } else {
+    oracleRankPilot(pilot).forEach(r=>{ oracleScoresRR[r.id]=r.oScore; });
+  }
+  const llmRanked = [...items].sort((a,b)=>llmWins[b.id]-llmWins[a.id]);
+  const oraRanked = [...items].sort((a,b)=>(oracleScoresRR[b.id]||0)-(oracleScoresRR[a.id]||0));
 
-  // Consistency check: for each transitive triplet A>B, B>C => A>C?
-  let consistent = true;
-  let cycleDesc  = '';
-  if(pairings.length===3){
-    const wins = {};
-    rrResults.forEach(r=>{ wins[r.llmWinner+'_'+[r.idA,r.idB].find(x=>x!==r.llmWinner)] = true; });
-    const [p1,p2,p3] = pairings.map(p=>p.id);
-    // Check for cycle
-    if(wins[p1+'_'+p2] && wins[p2+'_'+p3] && wins[p3+'_'+p1]){ consistent=false; cycleDesc='P'+p1+'>P'+p2+'>P'+p3+'>P'+p1; }
-    if(wins[p1+'_'+p3] && wins[p3+'_'+p2] && wins[p2+'_'+p1]){ consistent=false; cycleDesc='P'+p1+'>P'+p3+'>P'+p2+'>P'+p1; }
+  // Consistency check (only meaningful with 3 items)
+  let consistent = true, cycleDesc = '';
+  if(items.length===3){
+    const wins={};
+    rrResults.forEach(r=>{ wins[r.llmWinner+'_'+[r.idA,r.idB].find(x=>x!==r.llmWinner)]=true; });
+    const [i1,i2,i3]=items.map(x=>x.id);
+    if(wins[i1+'_'+i2]&&wins[i2+'_'+i3]&&wins[i3+'_'+i1]){consistent=false;cycleDesc=shortLabel+i1+'>'+shortLabel+i2+'>'+shortLabel+i3+'>'+shortLabel+i1;}
+    if(wins[i1+'_'+i3]&&wins[i3+'_'+i2]&&wins[i2+'_'+i1]){consistent=false;cycleDesc=shortLabel+i1+'>'+shortLabel+i3+'>'+shortLabel+i2+'>'+shortLabel+i1;}
   }
 
-  // Agreement with oracle ranking
-  const total        = rrResults.length;
-  const clearRR      = rrResults.filter(r=>r.oracleDiff > 0); // exclude oracle ties
-  const correct      = clearRR.filter(r=>r.correct).length;
-  const pct          = clearRR.length>0 ? Math.round(correct/clearRR.length*100) : 0;
-  const tiedRR       = total - clearRR.length;
+  const total   = rrResults.length;
+  const clearRR = rrResults.filter(r=>r.oracleDiff > 0);
+  const correct = clearRR.filter(r=>r.correct).length;
+  const pct     = clearRR.length>0 ? Math.round(correct/clearRR.length*100) : 0;
+  const tiedRR  = total - clearRR.length;
 
   let html = '<div class="card" style="border-color:#2563eb">';
   html += '<div class="card-title">Round-robin result — Capt. '+pilot.name+'</div>';
 
-  // Summary stats
   html += '<div class="pw-summary">';
   html += '<div class="pw-stat"><div class="pw-stat-val" style="color:'+(pct>=70?'#16a34a':pct>=50?'#d97706':'#dc2626')+'">'+pct+'%</div><div class="pw-stat-lbl">oracle agreement'+(tiedRR>0?' (excl. ties)':'')+'</div></div>';
   html += '<div class="pw-stat"><div class="pw-stat-val">'+correct+'/'+clearRR.length+'</div><div class="pw-stat-lbl">clear pairs matched</div></div>';
@@ -1784,34 +1869,35 @@ function renderRoundRobinResult(){
   html += '</div>';
 
   if(!consistent){
-    html += '<div style="font-size:11px;color:#dc2626;font-family:monospace;margin-bottom:10px">⚠ Cycle detected: '+cycleDesc+'. Preferences are not fully transitive — no consistent ranking is possible.</div>';
+    html += '<div style="font-size:11px;color:#dc2626;font-family:monospace;margin-bottom:10px">⚠ Cycle detected: '+cycleDesc+'. Preferences are not fully transitive.</div>';
   }
 
-  // Side-by-side rankings
   html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">';
 
-  // LLM ranking
+  // LLM derived ranking
   html += '<div><div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:8px">LLM derived ranking</div>';
-  llmRanked.forEach((p,i)=>{
-    const route = p.legs.map(l=>l.dep).join('→')+'→'+p.legs[p.legs.length-1].arr;
+  llmRanked.forEach((item,i)=>{
+    const sub = lineMode
+      ? lineAircraftTypes(item).join('+')+' · '+lineTotalCreditHours(item)+'h credit'
+      : item.legs.map(l=>l.dep).join('→')+'→'+item.legs[item.legs.length-1].arr;
     html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9">';
-    html += '<div style="font-size:18px;color:'+(i===0?'#2563eb':'#d0d5dd');
-    html += ';font-weight:500;width:20px">'+(i+1)+'</div>';
-    html += '<div><div style="font-size:13px;font-weight:500">Pairing '+p.id+'</div>';
-    html += '<div style="font-size:11px;color:#888;font-family:monospace">'+route+' · '+llmWins[p.id]+' win'+(llmWins[p.id]!==1?'s':'')+'</div></div></div>';
+    html += '<div style="font-size:18px;color:'+(i===0?'#2563eb':'#d0d5dd')+';font-weight:500;width:20px">'+(i+1)+'</div>';
+    html += '<div><div style="font-size:13px;font-weight:500">'+itemLabel+item.id+'</div>';
+    html += '<div style="font-size:11px;color:#888;font-family:monospace">'+sub+' · '+llmWins[item.id]+' win'+(llmWins[item.id]!==1?'s':'')+'</div></div></div>';
   });
   html += '</div>';
 
   // Oracle ranking
   html += '<div><div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:8px">Oracle ranking</div>';
-  oraRanked.forEach((p,i)=>{
-    const route = p.legs.map(l=>l.dep).join('→')+'→'+p.legs[p.legs.length-1].arr;
-    const oScore = oracleRankPilot(pilot).find(r=>r.id===p.id)?.oScore||0;
+  oraRanked.forEach((item,i)=>{
+    const oScore = oracleScoresRR[item.id]||0;
+    const sub = lineMode
+      ? lineAircraftTypes(item).join('+')+' · '+lineTotalCreditHours(item)+'h credit'
+      : item.legs.map(l=>l.dep).join('→')+'→'+item.legs[item.legs.length-1].arr;
     html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9">';
-    html += '<div style="font-size:18px;color:'+(i===0?'#16a34a':'#d0d5dd');
-    html += ';font-weight:500;width:20px">'+(i+1)+'</div>';
-    html += '<div><div style="font-size:13px;font-weight:500">Pairing '+p.id+'</div>';
-    html += '<div style="font-size:11px;color:#888;font-family:monospace">'+route+' · '+oScore+' pts</div></div></div>';
+    html += '<div style="font-size:18px;color:'+(i===0?'#16a34a':'#d0d5dd')+';font-weight:500;width:20px">'+(i+1)+'</div>';
+    html += '<div><div style="font-size:13px;font-weight:500">'+itemLabel+item.id+'</div>';
+    html += '<div style="font-size:11px;color:#888;font-family:monospace">'+sub+' · '+oScore+' pts</div></div></div>';
   });
   html += '</div>';
   html += '</div>'; // grid
@@ -1828,9 +1914,9 @@ function renderRoundRobinResult(){
         : '<span style="color:#dc2626">✗ oracle mismatch</span>';
     html += '<div class="pw-result '+cls+'">';
     html += '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:11px;margin-bottom:4px">';
-    html += '<span>P'+r.idA+' vs P'+r.idB+'</span>';
+    html += '<span>'+shortLabel+r.idA+' vs '+shortLabel+r.idB+'</span>';
     html += label+' <span style="color:#888;margin-left:6px">· '+r.confidence+'</span></div>';
-    html += '<div style="font-size:11px;color:#555;font-family:monospace">LLM → P'+r.llmWinner+' · Oracle → P'+r.oracleWinner+' (gap '+r.oracleDiff+'pts)<br>'+r.reason+'</div>';
+    html += '<div style="font-size:11px;color:#555;font-family:monospace">LLM → '+shortLabel+r.llmWinner+' · Oracle → '+shortLabel+r.oracleWinner+' (gap '+r.oracleDiff+'pts)<br>'+r.reason+'</div>';
     html += '</div>';
   });
   html += '</div>';
@@ -2020,41 +2106,40 @@ function renderEvalSummary(){
 
   // ── Pairwise mode: round-robin summary per pilot ──
   if(hasPairwise){
-    // Group by pilot
     const byPilot = {};
     pwComparisons.forEach(r=>{
       if(!byPilot[r.pilotName]) byPilot[r.pilotName]=[];
       byPilot[r.pilotName].push(r);
     });
 
+    const items      = lineMode ? lines : pairings;
+    const itemLabel  = lineMode ? 'Line ' : 'Pairing ';
+
     html += '<div style="margin-top:'+(hasOracle?'1.5rem':'0')+'">';
-    html += '<div style="font-size:11px;color:#888;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Pairwise — derived rankings vs oracle per pilot</div>';
+    html += '<div style="font-size:11px;color:#888;font-family:monospace;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px">Pairwise — derived rankings vs oracle per '+(lineMode?'line':'pairing')+' per pilot</div>';
 
     Object.entries(byPilot).forEach(([pilotName, results])=>{
       const pilot = pilots.find(p=>p.name===pilotName);
 
-      // LLM win counts from head-to-head results
-      const llmWins={};pairings.forEach(p=>llmWins[p.id]=0);
+      const llmWins={};
+      items.forEach(it=>llmWins[it.id]=0);
       results.forEach(r=>{ llmWins[r.llmWinner]++; });
-      const llmRanked = [...pairings].sort((a,b)=>llmWins[b.id]-llmWins[a.id]);
+      const llmRanked = [...items].sort((a,b)=>llmWins[b.id]-llmWins[a.id]);
 
-      // Oracle ranking: use actual oracle scores (not win counts) — avoids tie-order artifacts
       const oracleScores = {};
       if(pilot){
-        oracleRankPilot(pilot).forEach(r=>{ oracleScores[r.id]=r.oScore; });
+        if(lineMode){
+          oracleRankLines(pilot, lines).forEach(r=>{ oracleScores[r.line.id]=r.score; });
+        } else {
+          oracleRankPilot(pilot).forEach(r=>{ oracleScores[r.id]=r.oScore; });
+        }
       }
-      const oraRanked = [...pairings].sort((a,b)=>(oracleScores[b.id]||0)-(oracleScores[a.id]||0));
+      const oraRanked = [...items].sort((a,b)=>(oracleScores[b.id]||0)-(oracleScores[a.id]||0));
 
-      // Head-to-head stats — only count comparisons where oracle had a clear preference (gap > 0)
-      const total        = results.length;
-      const clearResults = results.filter(r=>r.oracleDiff > 0); // exclude oracle ties
+      const clearResults = results.filter(r=>r.oracleDiff > 0);
       const clearCorrect = clearResults.filter(r=>r.correct).length;
       const tiedCount    = results.length - clearResults.length;
-
-      // Position matches: compare LLM rank vs oracle rank by position
-      // Only mark as match/mismatch if oracle scores are distinct at that position
-      const posMatches   = llmRanked.filter((p,i)=>oraRanked[i]&&oraRanked[i].id===p.id).length;
-
+      const posMatches   = llmRanked.filter((it,i)=>oraRanked[i]&&oraRanked[i].id===it.id).length;
       const pct  = clearResults.length>0 ? Math.round(clearCorrect/clearResults.length*100) : 0;
       const col  = pct>=70?'#16a34a':pct>=50?'#d97706':'#dc2626';
 
@@ -2063,45 +2148,48 @@ function renderEvalSummary(){
       html += '<div style="font-size:13px;font-weight:500;color:#1a1a1a">Capt. '+pilotName+'</div>';
       html += '<div style="font-size:12px;font-family:monospace;color:'+col+'">'+clearCorrect+'/'+clearResults.length+' clear pairs matched oracle ('+pct+'%)'+(tiedCount>0?' · '+tiedCount+' tied (excluded)':'')+'</div>';
       html += '</div>';
-      html += '<div style="font-size:10px;color:#bbb;font-family:monospace;margin-bottom:10px">Position agreement: '+posMatches+'/3 positions match oracle rank</div>';
+      html += '<div style="font-size:10px;color:#bbb;font-family:monospace;margin-bottom:10px">Position agreement: '+posMatches+'/'+items.length+' positions match oracle rank</div>';
 
       html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
 
       // LLM derived ranking
       html += '<div><div style="font-size:10px;color:#2563eb;font-family:monospace;margin-bottom:5px">LLM ranking (by wins)</div>';
-      llmRanked.forEach((p,i)=>{
-        const route      = p.legs.map(l=>l.dep).join('→')+'→'+p.legs[p.legs.length-1].arr;
-        const oraScore   = oracleScores[p.id]||0;
-        const oraPos     = oraRanked.findIndex(op=>op.id===p.id);
-        // Only show ✓/✗ if oracle scores differ at these positions (not a tie)
-        const oraAtThisPos      = oraRanked[i];
-        const oraScoreAtThisPos = oracleScores[oraAtThisPos?.id]||0;
-        const ambiguous  = oraScore === oraScoreAtThisPos && oraPos !== i; // same score = tie = don't penalise
-        const match      = oraPos === i;
-        const inelig     = oraScore === 0;
-        let   indicator  = '';
-        if(inelig)                  indicator = '<span style="font-size:10px;color:#bbb">ineligible</span>';
-        else if(ambiguous)          indicator = '<span style="font-size:10px;color:#888">~tie</span>';
-        else if(match)              indicator = '<span style="font-size:10px;color:#16a34a">✓</span>';
-        else                        indicator = '<span style="font-size:10px;color:#dc2626">✗</span>';
+      llmRanked.forEach((it,i)=>{
+        const sub = lineMode
+          ? lineAircraftTypes(it).join('+')+' · '+lineTotalCreditHours(it)+'h'
+          : it.legs.map(l=>l.dep).join('→')+'→'+it.legs[it.legs.length-1].arr;
+        const oraScore   = oracleScores[it.id]||0;
+        const oraPos     = oraRanked.findIndex(op=>op.id===it.id);
+        const oraAtPos   = oraRanked[i];
+        const oraScoreAtPos = oracleScores[oraAtPos?.id]||0;
+        const ambiguous  = oraScore===oraScoreAtPos && oraPos!==i;
+        const match      = oraPos===i;
+        const inelig     = oraScore===0;
+        let indicator = '';
+        if(inelig)         indicator = '<span style="font-size:10px;color:#bbb">ineligible</span>';
+        else if(ambiguous) indicator = '<span style="font-size:10px;color:#888">~tie</span>';
+        else if(match)     indicator = '<span style="font-size:10px;color:#16a34a">✓</span>';
+        else               indicator = '<span style="font-size:10px;color:#dc2626">✗</span>';
 
         html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #e2e8f0">';
         html += '<div style="font-size:15px;font-weight:500;color:'+(i===0?'#2563eb':'#bbb')+';width:18px">'+(i+1)+'</div>';
-        html += '<div><div style="font-size:12px;font-weight:500;color:#1a1a1a">Pairing '+p.id+' '+indicator+'</div>';
-        html += '<div style="font-size:10px;color:#888">'+route+' · '+llmWins[p.id]+' win'+(llmWins[p.id]!==1?'s':'')+'</div></div></div>';
+        html += '<div><div style="font-size:12px;font-weight:500;color:#1a1a1a">'+itemLabel+it.id+' '+indicator+'</div>';
+        html += '<div style="font-size:10px;color:#888">'+sub+' · '+llmWins[it.id]+' win'+(llmWins[it.id]!==1?'s':'')+'</div></div></div>';
       });
       html += '</div>';
 
       // Oracle ranking (by actual scores)
       html += '<div><div style="font-size:10px;color:#16a34a;font-family:monospace;margin-bottom:5px">Oracle ranking (by score)</div>';
-      oraRanked.forEach((p,i)=>{
-        const route  = p.legs.map(l=>l.dep).join('→')+'→'+p.legs[p.legs.length-1].arr;
-        const oScore = oracleScores[p.id]||0;
+      oraRanked.forEach((it,i)=>{
+        const sub = lineMode
+          ? lineAircraftTypes(it).join('+')+' · '+lineTotalCreditHours(it)+'h'
+          : it.legs.map(l=>l.dep).join('→')+'→'+it.legs[it.legs.length-1].arr;
+        const oScore = oracleScores[it.id]||0;
         const inelig = oScore===0;
         html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #e2e8f0">';
         html += '<div style="font-size:15px;font-weight:500;color:'+(i===0&&!inelig?'#16a34a':'#bbb')+';width:18px">'+(i+1)+'</div>';
-        html += '<div><div style="font-size:12px;font-weight:500;color:'+(inelig?'#bbb':'#1a1a1a')+'">Pairing '+p.id+(inelig?' (ineligible)':'')+'</div>';
-        html += '<div style="font-size:10px;color:#888">'+route+' · '+oScore+' pts</div></div></div>';
+        html += '<div><div style="font-size:12px;font-weight:500;color:'+(inelig?'#bbb':'#1a1a1a')+'">'+itemLabel+it.id+(inelig?' (ineligible)':'')+'</div>';
+        html += '<div style="font-size:10px;color:#888">'+sub+' · '+oScore+' pts</div></div></div>';
       });
       html += '</div>';
       html += '</div>'; // grid
@@ -2164,18 +2252,17 @@ function scoringRankingListForPilot(pilot){
 function pairwiseRankingListForPilot(pilot){
   var st=_pwByPilot[pilot.id];
   if(!st||!st.done||!st.rrResults||st.rrResults.length!==st.rrPairs.length)return null;
+  var items = lineMode ? lines : pairings;
   var llmWins={};
-  pairings.forEach(function(pa){ llmWins[pa.id]=0; });
+  items.forEach(function(it){ llmWins[it.id]=0; });
   st.rrResults.forEach(function(r){ llmWins[r.llmWinner]++; });
-  var ranked=[].concat(pairings).sort(function(a,b){
+  var ranked=[].concat(items).sort(function(a,b){
     var d=llmWins[b.id]-llmWins[a.id];
     return d!==0 ? d : a.id-b.id;
   });
-  return ranked.map(function(pair,i){
-    return Object.assign({}, pair, {
-      llmRank: i+1,
-      qualified: pilot.qualifiedTypes.indexOf(pair.aircraft)>=0
-    });
+  return ranked.map(function(item,i){
+    var qualified = lineMode ? lineQualified(pilot, item) : pilot.qualifiedTypes.indexOf(item.aircraft)>=0;
+    return Object.assign({}, item, { llmRank: i+1, qualified: qualified });
   });
 }
 
@@ -2543,7 +2630,7 @@ function saveRun(){
       log.push({
         ts: new Date().toLocaleTimeString(), llm: llmName, mode: 'Pairwise',
         summary: correct+'/'+total+' correct ('+pct+'% oracle agreement)',
-        detail: pwComparisons.map(r=>'P'+r.idA+'vsP'+r.idB+': LLM P'+r.llmWinner+' Oracle P'+r.oracleWinner+' '+(r.correct?'✓':'✗')+' gap '+r.oracleDiff+'pts').join(' | ')
+        detail: pwComparisons.map(r=>(lineMode?'L':'P')+r.idA+'vs'+(lineMode?'L':'P')+r.idB+': LLM '+(lineMode?'L':'P')+r.llmWinner+' Oracle '+(lineMode?'L':'P')+r.oracleWinner+' '+(r.correct?'✓':'✗')+' gap '+r.oracleDiff+'pts').join(' | ')
       });
     }
     renderLog();
@@ -2666,7 +2753,6 @@ function exportJSON(){
     tafb_h: p.tafb,
     block_hours: p.blockHours,
     credit_hours: p.creditHours,
-      credit_hours: p.creditHours,
     per_diem: p.perDiem,
     report_time: fmtTime(((p.reportTimeMins%1440)+1440)%1440),
     report_time_mins: p.reportTimeMins,
@@ -2823,15 +2909,18 @@ function _resetEvalState(){
   _lastLineAlloc={};
   _lastAlloc={};
   _lastAllocLlmSourceByPilot=null;
-  if(rr) rr.style.display='none';
+  var rr=document.getElementById('rrStepper'); if(rr) rr.style.display='none';
   var rc=document.getElementById('rrCard');
   if(rc) rc.style.display='block';
 }
 
 function newPilots(){
-  buildPilots(true); // randomise pilot seed
+  buildPilots(true);
+  activePilot.setup = 0;
   _resetEvalState();
   renderSetup();
+  renderSetupLines();
+  renderOracleLines();
 }
 
 function newPairings(){
@@ -3071,6 +3160,7 @@ function toggleLineMode(){
   var pairSection=document.getElementById('setupPairingsSection');
   var lineSection=document.getElementById('setupLinesSection');
   var oracleLinesSection=document.getElementById('oracleLinesSection');
+  var oraclePairingsSection=document.getElementById('oraclePairingsSection');
   if(lineMode){
     btn.textContent='Switch to pairing mode \u2192';
     newLinesBtn.style.display='';
@@ -3078,6 +3168,7 @@ function toggleLineMode(){
     pairSection.style.display='none';
     lineSection.style.display='';
     if(oracleLinesSection) oracleLinesSection.style.display='';
+    if(oraclePairingsSection) oraclePairingsSection.style.display='none';
     lines=buildLines();
     renderSetupLines();
     renderOracleLines();
@@ -3088,6 +3179,7 @@ function toggleLineMode(){
     pairSection.style.display='';
     lineSection.style.display='none';
     if(oracleLinesSection) oracleLinesSection.style.display='none';
+    if(oraclePairingsSection) oraclePairingsSection.style.display='';
     lines=[];
     renderOracleLines();
   }
@@ -3103,7 +3195,7 @@ function newLines(){
   _resetEvalState();
 }
 
-function _lineCardHtml(line, pilot, rank){
+function _lineCardHtml(line, pilot, rank, ctx){
   var qualified=lineQualified(pilot,line);
   var conflicts=lineHasConflicts(line);
   var acTypes=lineAircraftTypes(line).join('+');
@@ -3118,7 +3210,7 @@ function _lineCardHtml(line, pilot, rank){
   var qualLabel=qualified
     ?'<span style="color:#16a34a;font-size:10px">\u2713 qualified</span>'
     :'<span style="color:#dc2626;font-size:10px">\u2717 not qualified</span>';
-  var cardId='lc-'+pilot.id+'-'+line.id;
+  var cardId=(ctx||'lc')+'-'+pilot.id+'-'+line.id;
   var pairingRows='';
   line.pairings.forEach(function(p){
     var repStr=fmtTime(((p.reportTimeMins%1440)+1440)%1440);
@@ -3171,9 +3263,9 @@ function _toggleLineDetail(cardId){
 function renderSetupLines(){
   var el=document.getElementById('setupLines');
   if(!el||!lines.length) return;
-  var pilot=pilots[0];
+  var pilot=pilots.find(function(p){ return p.id===activePilot.setup; })||pilots[0];
   var ranked=oracleRankLines(pilot,lines);
-  el.innerHTML=ranked.map(function(r){ return _lineCardHtml(r.line,pilot,r.rank); }).join('');
+  el.innerHTML=ranked.map(function(r){ return _lineCardHtml(r.line,pilot,r.rank,'slc'); }).join('');
 }
 
 function renderOracleLines(){
@@ -3186,7 +3278,7 @@ function renderOracleLines(){
   var pid=activePilot.oracle||pilots[0].id;
   var pilot=pilots.find(function(p){ return p.id===pid; })||pilots[0];
   var ranked=oracleRankLines(pilot,lines);
-  el.innerHTML=ranked.map(function(r){ return _lineCardHtml(r.line,pilot,r.rank); }).join('');
+  el.innerHTML=ranked.map(function(r){ return _lineCardHtml(r.line,pilot,r.rank,'olc'); }).join('');
 }
 
 let selectedMode = null;
@@ -3448,38 +3540,44 @@ function renderLineModeEvalResult(p){
   var oMap={};
   oracle.forEach(function(r){ oMap[r.line.id]=r; });
   var m=p.lineEvalMetrics||{};
-  var metricsHtml='<div class="eval-summary" style="margin-bottom:14px">'
-    +'<div class="eval-metric-row">'
-    +'<span class="eval-metric-lbl">Spearman \u03c1</span>'
-    +'<span class="eval-metric-val">'+m.spearman+'</span></div>'
-    +'<div class="eval-metric-row">'
-    +'<span class="eval-metric-lbl">Top-1 match</span>'
-    +'<span class="eval-metric-val">'+(m.top1?'\u2713 yes':'\u2717 no')+'</span></div>'
-    +'<div class="eval-metric-row">'
-    +'<span class="eval-metric-lbl">Elig. accuracy</span>'
-    +'<span class="eval-metric-val">'+m.eligAccuracy+'%</span></div>'
-    +'<div class="eval-metric-row">'
-    +'<span class="eval-metric-lbl">Overall score</span>'
-    +'<span class="eval-metric-val">'+p.evalScore+'</span></div>'
+  var sc=p.evalScore>=75?'green':p.evalScore<50?'red':'';
+
+  var html='<div class="score-grid">'
+    +'<div class="score-box"><div class="score-num">'+m.spearman+'</div><div class="score-lbl">spearman \u03c1</div></div>'
+    +'<div class="score-box '+(m.top1?'green':'red')+'"><div class="score-num">'+(m.top1?'\u2713':'\u2717')+'</div><div class="score-lbl">top-1 match</div></div>'
+    +'<div class="score-box"><div class="score-num">'+m.eligAccuracy+'%</div><div class="score-lbl">elig. accuracy</div></div>'
+    +'<div class="score-box '+sc+'"><div class="score-num">'+p.evalScore+'</div><div class="score-lbl">overall score</div></div>'
     +'</div>';
+
+  html+='<div class="card" style="margin-bottom:8px;background:#f8fafc;border-color:#e2e8f0">'
+    +'<div style="font-size:11px;color:#888;font-family:monospace;line-height:1.7">'
+    +'<strong style="color:#555">What these mean:</strong><br>'
+    +'<strong>Spearman \u03c1:</strong> rank correlation with oracle \u2014 1.0=perfect match, 0=no correlation, -1=reversed.<br>'
+    +'<strong>Top-1:</strong> did the LLM pick the same #1 line as the oracle?<br>'
+    +'<strong>Elig. accuracy:</strong> did it correctly flag unqualified lines?<br>'
+    +'<em>Note: agreement reflects alignment with your oracle weights, not absolute pilot truth.</em>'
+    +'</div></div>';
+
+  html+='<div class="card"><div class="card-title">Capt. '+p.name+' \u2014 line-by-line</div>';
   var sorted=[].concat(llm).sort(function(a,b){ return a.rank-b.rank; });
-  var rowsHtml='<div style="overflow-x:auto"><table class="eval-table"><thead><tr>'
-    +'<th>LLM rank</th><th>Line</th><th>Eligible</th><th>Oracle rank</th><th>Oracle score</th><th>Reason</th>'
-    +'</tr></thead><tbody>';
   sorted.forEach(function(r){
     var o=oMap[r.lineId];
-    var rankMatch=o&&o.rank===r.rank;
-    rowsHtml+='<tr'+(rankMatch?' style="background:#f0fdf4"':'')+'>'
-      +'<td>#'+r.rank+'</td>'
-      +'<td>L'+r.lineId+'</td>'
-      +'<td>'+(r.eligible?'\u2713':'\u2717')+'</td>'
-      +'<td>'+(o?'#'+o.rank:'—')+'</td>'
-      +'<td>'+(o?o.score:'—')+'</td>'
-      +'<td style="font-size:11px;max-width:280px">'+r.shortReason+'</td>'
-      +'</tr>';
+    var diff=o?Math.abs(r.rank-o.rank):null;
+    var cls=diff===0?'exact':diff===1?'close':'off';
+    var acTypes=o?lineAircraftTypes(o.line).join('+'):'';
+    var creditH=o?lineTotalCreditHours(o.line):'';
+    html+='<div class="result-row">'
+      +'<div class="rr-rank '+cls+'">#'+r.rank+'</div>'
+      +'<div class="rr-body">'
+      +'<div class="rr-route">Line '+r.lineId+(acTypes?' \u00b7 '+acTypes:'')+(creditH?' \u00b7 '+creditH+'h credit':'')+' '+(r.eligible?'\u2714 eligible':'\u2717 not eligible')+'</div>'
+      +'<div class="rr-sub">'+(r.shortReason||'')+'</div>'
+      +'<div class="rr-oracle">'+(o?'oracle #'+o.rank+' ('+o.score+'pts) \u2014 '+(diff===0?'\u2713 exact':diff===1?'~ off by 1':'\u2717 off by '+diff):'oracle rank unavailable')+'</div>'
+      +'</div></div>';
   });
-  rowsHtml+='</tbody></table></div>';
-  el.innerHTML=metricsHtml+rowsHtml;
+  html+='</div>';
+  html+='<div class="btn-row" style="margin-top:1rem"><button class="btn primary" onclick="saveRun()">Save run to log \u2192</button></div>';
+  el.innerHTML=html;
+  renderEvalSummary();
 }
 
 async function runAllPairwiseBackend(){
@@ -3549,13 +3647,15 @@ async function runAllPilotsPairwiseBackend(){
   for(let i = 0; i < pilots.length; i++){
     if(_autoRunStopped) break;
     const pilot = pilots[i];
-    const qualifiedPairings = pairings.filter(p=>pilot.qualifiedTypes.includes(p.aircraft));
-    if(qualifiedPairings.length < 2) continue;
+    const eligible = lineMode
+      ? lines.filter(ln=>lineQualified(pilot, ln))
+      : pairings.filter(p=>pilot.qualifiedTypes.includes(p.aircraft));
+    if(eligible.length < 2) continue;
 
     const pairs = [];
-    for(let a=0; a<qualifiedPairings.length; a++)
-      for(let b=a+1; b<qualifiedPairings.length; b++)
-        pairs.push({idA: qualifiedPairings[a].id, idB: qualifiedPairings[b].id});
+    for(let a=0; a<eligible.length; a++)
+      for(let b=a+1; b<eligible.length; b++)
+        pairs.push({idA: eligible[a].id, idB: eligible[b].id});
 
     statusEl.style.color = '#2563eb';
     statusEl.textContent = 'Capt. '+pilot.name+' — '+(i+1)+'/'+pilots.length+' ('+pairs.length+' comparisons)…';

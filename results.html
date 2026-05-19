@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pilot Bidding Results</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:1300px;margin:2rem auto;padding:0 1.5rem;color:#222;line-height:1.5}
+h1{border-bottom:3px solid #2c3e50;padding-bottom:.4rem;margin-bottom:.3rem}
+h2{color:#2c3e50;margin-top:2.5rem;margin-bottom:.5rem}
+.meta{color:#555;font-size:.9rem;margin-bottom:2rem}
+table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.87rem}
+th{background:#2c3e50;color:#fff;padding:.5rem .8rem;text-align:left;white-space:nowrap}
+td{padding:.38rem .8rem;border-bottom:1px solid #e5e5e5;vertical-align:middle}
+tbody tr:hover td{background:#f4f8fb}
+.r-both td{background:#bbf7d0!important;font-weight:600}
+.r-llm td{background:#dcfce7!important;font-weight:600}
+.r-ora td{background:#dbeafe!important}
+.first{color:#16a34a;font-weight:700}
+.nth{color:#d97706}
+.inelig{color:#bbb;text-decoration:line-through}
+.m-yes{color:#16a34a}
+.m-no{color:#dc2626}
+details{border:1px solid #d1d5db;border-radius:6px;margin:.35rem 0}
+summary{padding:.65rem 1.1rem;cursor:pointer;background:#f9fafb;font-weight:600;
+        border-radius:6px;list-style:none;display:flex;align-items:center;gap:.5rem}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▶";font-size:.65rem;transition:transform .15s;flex-shrink:0}
+details[open]>summary::before{transform:rotate(90deg)}
+details[open]>summary{border-radius:6px 6px 0 0;border-bottom:1px solid #d1d5db}
+.inner{padding:.9rem 1.1rem;overflow-x:auto}
+.leg{font-size:.8rem;color:#555;margin:.15rem 0 .15rem 1rem}
+.swatch{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:3px;vertical-align:middle}
+</style>
+</head>
+<body>
+<h1>Pilot Bidding Results</h1>
+<div class="meta">
+  <strong>LLM:</strong> manual &nbsp;&nbsp;
+  <strong>Exported:</strong> 2026-05-19 17:32 UTC &nbsp;&nbsp;
+  <strong>Scenario:</strong> 3 pilots &nbsp;·&nbsp; 20 lines × 5 pairings/line &nbsp;·&nbsp; Base: BOS &nbsp;·&nbsp; Mode: line
+</div>
+
+<h2>Allocation Summary</h2>
+<table>
+  <thead><tr>
+    <th>Snr</th><th>Pilot</th>
+    <th>Oracle — Assigned</th><th>Oracle Rank</th>
+    <th>LLM — Assigned</th><th>LLM Rank</th>
+    <th>Match?</th><th>Details</th>
+  </tr></thead>
+  <tbody><tr><td>#1</td><td><strong>Dana Okafor</strong><br><small>B737, pref: B737</small></td><td>L12</td><td><span class="first">★ #1</span></td><td><em>N/A</em></td><td><em>N/A</em></td><td>—</td><td>44.9h credit &nbsp;·&nbsp; 9 nights &nbsp;·&nbsp; B737</td></tr>
+<tr><td>#2</td><td><strong>Morgan Kim</strong><br><small>B737, pref: B737</small></td><td>L4</td><td><span class="first">★ #1</span></td><td><em>N/A</em></td><td><em>N/A</em></td><td>—</td><td>44.6h credit &nbsp;·&nbsp; 11 nights &nbsp;·&nbsp; B737</td></tr>
+<tr><td>#3</td><td><strong>Jordan Lee</strong><br><small>B737/B767, pref: B767</small></td><td>L16</td><td><span class="first">★ #1</span></td><td><em>N/A</em></td><td><em>N/A</em></td><td>—</td><td>49.5h credit &nbsp;·&nbsp; 9 nights &nbsp;·&nbsp; B767</td></tr></tbody>
+</table>
+<h2>Per-Pilot Line Rankings</h2><p style='color:#555;font-size:.9rem;margin-bottom:.8rem'>Click a pilot to expand their full ranked list of lines. Rows are ordered by LLM preference rank (best first).</p><details>
+<summary>
+  <span>#1 &nbsp; Capt. Dana Okafor</span>
+  <span style="font-weight:400;color:#555">&nbsp;·&nbsp; B737, pref: B737</span>
+</summary>
+<div class="inner">
+<p style="font-size:.82rem;color:#555;margin:.2rem 0 .6rem">
+  <span class="swatch" style="background:#bbf7d0"></span>Both oracle &amp; LLM assigned &nbsp;
+  <span class="swatch" style="background:#dcfce7"></span>LLM assigned &nbsp;
+  <span class="swatch" style="background:#dbeafe"></span>Oracle assigned
+</p>
+<table>
+  <thead><tr>
+    <th>LLM Rank</th><th>Oracle Rank</th><th>Line</th>
+    <th>Credit Hrs</th><th>Nights Away</th><th>Aircraft</th>
+    <th>LLM Reason</th><th>Pairings</th>
+  </tr></thead>
+  <tbody><tr class="r-ora"><td>—</td><td><span class="first">★ #1</span></td><td><strong>L12</strong> &nbsp;<small style="color:#555">← Oracle assigned</small></td><td>44.9h</td><td>9</td><td>B737</td><td></td><td><small>P14(Sun)  P92(Thu)  P22(Mon)  P96(Sat)  P85(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#2</span></td><td><strong>L11</strong></td><td>44.1h</td><td>9</td><td>B737</td><td></td><td><small>P74(Wed)  P1(Sat)  P86(Mon)  P90(Sat)  P99(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#3</span></td><td><strong>L3</strong></td><td>49.1h</td><td>10</td><td>B737</td><td></td><td><small>P89(Tue)  P72(Fri)  P23(Fri)  P65(Sat)  P50(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#4</span></td><td><strong>L9</strong></td><td>45.4h</td><td>10</td><td>B737</td><td></td><td><small>P97(Sat)  P94(Sat)  P37(Fri)  P59(Tue)  P56(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#5</span></td><td><strong>L4</strong></td><td>44.6h</td><td>11</td><td>B737</td><td></td><td><small>P43(Tue)  P83(Sun)  P45(Thu)  P42(Wed)  P21(Sun)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#6</span></td><td><strong>L7</strong></td><td>50.0h</td><td>11</td><td>B737</td><td></td><td><small>P73(Tue)  P63(Tue)  P98(Wed)  P81(Sat)  P68(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#7</span></td><td><strong>L2</strong></td><td>46.4h</td><td>11</td><td>B737</td><td></td><td><small>P58(Thu)  P93(Wed)  P8(Thu)  P7(Wed)  P70(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#8</span></td><td><strong>L10</strong></td><td>50.7h</td><td>11</td><td>B737</td><td></td><td><small>P27(Fri)  P40(Thu)  P13(Sun)  P66(Sat)  P78(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#9</span></td><td><strong>L5</strong></td><td>48.1h</td><td>11</td><td>B737</td><td></td><td><small>P76(Sun)  P12(Fri)  P77(Mon)  P20(Sat)  P71(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#10</span></td><td><strong>L6</strong></td><td>49.3h</td><td>11</td><td>B737</td><td></td><td><small>P2(Mon)  P62(Mon)  P100(Mon)  P30(Thu)  P91(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#11</span></td><td><strong>L13</strong></td><td>53.7h</td><td>11</td><td>B737</td><td></td><td><small>P9(Sun)  P19(Mon)  P82(Thu)  P69(Mon)  P67(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#12</span></td><td><strong>L1</strong></td><td>47.4h</td><td>12</td><td>B737</td><td></td><td><small>P35(Wed)  P10(Thu)  P60(Fri)  P87(Sat)  P84(Mon)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#13</span></td><td><strong>L8</strong></td><td>49.9h</td><td>13</td><td>B737</td><td></td><td><small>P79(Thu)  P88(Sun)  P75(Mon)  P95(Thu)  P80(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#14</span></td><td><strong>L14</strong></td><td>42.1h</td><td>10</td><td>B737 / B767</td><td></td><td><small>P17(Fri)  P52(Sun)  P39(Thu)  P24(Mon)  P4(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#15</span></td><td><strong>L15</strong></td><td>36.1h</td><td>10</td><td>B767</td><td></td><td><small>P15(Fri)  P36(Mon)  P54(Sun)  P48(Thu)  P6(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#16</span></td><td><strong>L16</strong></td><td>49.5h</td><td>9</td><td>B767</td><td></td><td><small>P32(Sat)  P3(Thu)  P49(Sun)  P64(Fri)  P25(Thu)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#17</span></td><td><strong>L17</strong></td><td>40.5h</td><td>11</td><td>B767</td><td></td><td><small>P29(Tue)  P55(Sat)  P26(Tue)  P31(Wed)  P46(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#18</span></td><td><strong>L18</strong></td><td>28.9h</td><td>9</td><td>B767</td><td></td><td><small>P41(Sun)  P53(Sun)  P5(Sat)  P18(Thu)  P61(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#19</span></td><td><strong>L19</strong></td><td>32.1h</td><td>7</td><td>B767</td><td></td><td><small>P38(Sat)  P28(Fri)  P44(Thu)  P16(Mon)  P47(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#20</span></td><td><strong>L20</strong></td><td>46.6h</td><td>10</td><td>B767</td><td></td><td><small>P51(Sat)  P33(Mon)  P57(Fri)  P34(Sat)  P11(Wed)</small></td></tr></tbody>
+</table>
+</div>
+</details>
+<details>
+<summary>
+  <span>#2 &nbsp; Capt. Morgan Kim</span>
+  <span style="font-weight:400;color:#555">&nbsp;·&nbsp; B737, pref: B737</span>
+</summary>
+<div class="inner">
+<p style="font-size:.82rem;color:#555;margin:.2rem 0 .6rem">
+  <span class="swatch" style="background:#bbf7d0"></span>Both oracle &amp; LLM assigned &nbsp;
+  <span class="swatch" style="background:#dcfce7"></span>LLM assigned &nbsp;
+  <span class="swatch" style="background:#dbeafe"></span>Oracle assigned
+</p>
+<table>
+  <thead><tr>
+    <th>LLM Rank</th><th>Oracle Rank</th><th>Line</th>
+    <th>Credit Hrs</th><th>Nights Away</th><th>Aircraft</th>
+    <th>LLM Reason</th><th>Pairings</th>
+  </tr></thead>
+  <tbody><tr class="r-ora"><td>—</td><td><span class="first">★ #1</span></td><td><strong>L4</strong> &nbsp;<small style="color:#555">← Oracle assigned</small></td><td>44.6h</td><td>11</td><td>B737</td><td></td><td><small>P43(Tue)  P83(Sun)  P45(Thu)  P42(Wed)  P21(Sun)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#2</span></td><td><strong>L7</strong></td><td>50.0h</td><td>11</td><td>B737</td><td></td><td><small>P73(Tue)  P63(Tue)  P98(Wed)  P81(Sat)  P68(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#3</span></td><td><strong>L12</strong></td><td>44.9h</td><td>9</td><td>B737</td><td></td><td><small>P14(Sun)  P92(Thu)  P22(Mon)  P96(Sat)  P85(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#4</span></td><td><strong>L1</strong></td><td>47.4h</td><td>12</td><td>B737</td><td></td><td><small>P35(Wed)  P10(Thu)  P60(Fri)  P87(Sat)  P84(Mon)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#5</span></td><td><strong>L2</strong></td><td>46.4h</td><td>11</td><td>B737</td><td></td><td><small>P58(Thu)  P93(Wed)  P8(Thu)  P7(Wed)  P70(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#6</span></td><td><strong>L3</strong></td><td>49.1h</td><td>10</td><td>B737</td><td></td><td><small>P89(Tue)  P72(Fri)  P23(Fri)  P65(Sat)  P50(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#7</span></td><td><strong>L11</strong></td><td>44.1h</td><td>9</td><td>B737</td><td></td><td><small>P74(Wed)  P1(Sat)  P86(Mon)  P90(Sat)  P99(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#8</span></td><td><strong>L5</strong></td><td>48.1h</td><td>11</td><td>B737</td><td></td><td><small>P76(Sun)  P12(Fri)  P77(Mon)  P20(Sat)  P71(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#9</span></td><td><strong>L9</strong></td><td>45.4h</td><td>10</td><td>B737</td><td></td><td><small>P97(Sat)  P94(Sat)  P37(Fri)  P59(Tue)  P56(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#10</span></td><td><strong>L10</strong></td><td>50.7h</td><td>11</td><td>B737</td><td></td><td><small>P27(Fri)  P40(Thu)  P13(Sun)  P66(Sat)  P78(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#11</span></td><td><strong>L6</strong></td><td>49.3h</td><td>11</td><td>B737</td><td></td><td><small>P2(Mon)  P62(Mon)  P100(Mon)  P30(Thu)  P91(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#12</span></td><td><strong>L8</strong></td><td>49.9h</td><td>13</td><td>B737</td><td></td><td><small>P79(Thu)  P88(Sun)  P75(Mon)  P95(Thu)  P80(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#13</span></td><td><strong>L13</strong></td><td>53.7h</td><td>11</td><td>B737</td><td></td><td><small>P9(Sun)  P19(Mon)  P82(Thu)  P69(Mon)  P67(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#14</span></td><td><strong>L14</strong></td><td>42.1h</td><td>10</td><td>B737 / B767</td><td></td><td><small>P17(Fri)  P52(Sun)  P39(Thu)  P24(Mon)  P4(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#15</span></td><td><strong>L15</strong></td><td>36.1h</td><td>10</td><td>B767</td><td></td><td><small>P15(Fri)  P36(Mon)  P54(Sun)  P48(Thu)  P6(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#16</span></td><td><strong>L16</strong></td><td>49.5h</td><td>9</td><td>B767</td><td></td><td><small>P32(Sat)  P3(Thu)  P49(Sun)  P64(Fri)  P25(Thu)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#17</span></td><td><strong>L17</strong></td><td>40.5h</td><td>11</td><td>B767</td><td></td><td><small>P29(Tue)  P55(Sat)  P26(Tue)  P31(Wed)  P46(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#18</span></td><td><strong>L18</strong></td><td>28.9h</td><td>9</td><td>B767</td><td></td><td><small>P41(Sun)  P53(Sun)  P5(Sat)  P18(Thu)  P61(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#19</span></td><td><strong>L19</strong></td><td>32.1h</td><td>7</td><td>B767</td><td></td><td><small>P38(Sat)  P28(Fri)  P44(Thu)  P16(Mon)  P47(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#20</span></td><td><strong>L20</strong></td><td>46.6h</td><td>10</td><td>B767</td><td></td><td><small>P51(Sat)  P33(Mon)  P57(Fri)  P34(Sat)  P11(Wed)</small></td></tr></tbody>
+</table>
+</div>
+</details>
+<details>
+<summary>
+  <span>#3 &nbsp; Capt. Jordan Lee</span>
+  <span style="font-weight:400;color:#555">&nbsp;·&nbsp; B737/B767, pref: B767</span>
+</summary>
+<div class="inner">
+<p style="font-size:.82rem;color:#555;margin:.2rem 0 .6rem">
+  <span class="swatch" style="background:#bbf7d0"></span>Both oracle &amp; LLM assigned &nbsp;
+  <span class="swatch" style="background:#dcfce7"></span>LLM assigned &nbsp;
+  <span class="swatch" style="background:#dbeafe"></span>Oracle assigned
+</p>
+<table>
+  <thead><tr>
+    <th>LLM Rank</th><th>Oracle Rank</th><th>Line</th>
+    <th>Credit Hrs</th><th>Nights Away</th><th>Aircraft</th>
+    <th>LLM Reason</th><th>Pairings</th>
+  </tr></thead>
+  <tbody><tr class="r-ora"><td>—</td><td><span class="first">★ #1</span></td><td><strong>L16</strong> &nbsp;<small style="color:#555">← Oracle assigned</small></td><td>49.5h</td><td>9</td><td>B767</td><td></td><td><small>P32(Sat)  P3(Thu)  P49(Sun)  P64(Fri)  P25(Thu)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#2</span></td><td><strong>L18</strong></td><td>28.9h</td><td>9</td><td>B767</td><td></td><td><small>P41(Sun)  P53(Sun)  P5(Sat)  P18(Thu)  P61(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#3</span></td><td><strong>L15</strong></td><td>36.1h</td><td>10</td><td>B767</td><td></td><td><small>P15(Fri)  P36(Mon)  P54(Sun)  P48(Thu)  P6(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#4</span></td><td><strong>L19</strong></td><td>32.1h</td><td>7</td><td>B767</td><td></td><td><small>P38(Sat)  P28(Fri)  P44(Thu)  P16(Mon)  P47(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#5</span></td><td><strong>L20</strong></td><td>46.6h</td><td>10</td><td>B767</td><td></td><td><small>P51(Sat)  P33(Mon)  P57(Fri)  P34(Sat)  P11(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#6</span></td><td><strong>L12</strong></td><td>44.9h</td><td>9</td><td>B737</td><td></td><td><small>P14(Sun)  P92(Thu)  P22(Mon)  P96(Sat)  P85(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#7</span></td><td><strong>L17</strong></td><td>40.5h</td><td>11</td><td>B767</td><td></td><td><small>P29(Tue)  P55(Sat)  P26(Tue)  P31(Wed)  P46(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#8</span></td><td><strong>L11</strong></td><td>44.1h</td><td>9</td><td>B737</td><td></td><td><small>P74(Wed)  P1(Sat)  P86(Mon)  P90(Sat)  P99(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#9</span></td><td><strong>L14</strong></td><td>42.1h</td><td>10</td><td>B737 / B767</td><td></td><td><small>P17(Fri)  P52(Sun)  P39(Thu)  P24(Mon)  P4(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#10</span></td><td><strong>L3</strong></td><td>49.1h</td><td>10</td><td>B737</td><td></td><td><small>P89(Tue)  P72(Fri)  P23(Fri)  P65(Sat)  P50(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#11</span></td><td><strong>L9</strong></td><td>45.4h</td><td>10</td><td>B737</td><td></td><td><small>P97(Sat)  P94(Sat)  P37(Fri)  P59(Tue)  P56(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#12</span></td><td><strong>L4</strong></td><td>44.6h</td><td>11</td><td>B737</td><td></td><td><small>P43(Tue)  P83(Sun)  P45(Thu)  P42(Wed)  P21(Sun)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#13</span></td><td><strong>L7</strong></td><td>50.0h</td><td>11</td><td>B737</td><td></td><td><small>P73(Tue)  P63(Tue)  P98(Wed)  P81(Sat)  P68(Wed)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#14</span></td><td><strong>L2</strong></td><td>46.4h</td><td>11</td><td>B737</td><td></td><td><small>P58(Thu)  P93(Wed)  P8(Thu)  P7(Wed)  P70(Fri)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#15</span></td><td><strong>L10</strong></td><td>50.7h</td><td>11</td><td>B737</td><td></td><td><small>P27(Fri)  P40(Thu)  P13(Sun)  P66(Sat)  P78(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#16</span></td><td><strong>L5</strong></td><td>48.1h</td><td>11</td><td>B737</td><td></td><td><small>P76(Sun)  P12(Fri)  P77(Mon)  P20(Sat)  P71(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#17</span></td><td><strong>L6</strong></td><td>49.3h</td><td>11</td><td>B737</td><td></td><td><small>P2(Mon)  P62(Mon)  P100(Mon)  P30(Thu)  P91(Tue)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#18</span></td><td><strong>L13</strong></td><td>53.7h</td><td>11</td><td>B737</td><td></td><td><small>P9(Sun)  P19(Mon)  P82(Thu)  P69(Mon)  P67(Sat)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#19</span></td><td><strong>L1</strong></td><td>47.4h</td><td>12</td><td>B737</td><td></td><td><small>P35(Wed)  P10(Thu)  P60(Fri)  P87(Sat)  P84(Mon)</small></td></tr><tr class=""><td>—</td><td><span class="nth">#20</span></td><td><strong>L8</strong></td><td>49.9h</td><td>13</td><td>B737</td><td></td><td><small>P79(Thu)  P88(Sun)  P75(Mon)  P95(Thu)  P80(Sat)</small></td></tr></tbody>
+</table>
+</div>
+</details>
+</body>
+</html>
