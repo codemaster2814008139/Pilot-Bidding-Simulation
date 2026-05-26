@@ -74,11 +74,109 @@ only (not dollars) since pay varies by pilot.
 ### Hotel quality
 Fixed at Standard for all hotels (removed as a variable factor).
 
+## Methods
+
+### A · Rank-all
+
+The LLM receives a single prompt containing the pilot's full profile and all
+pairings/lines. It returns a JSON-ranked list in one call.
+
+- No statistical model — purely prompt engineering.
+- Evaluated directly with Spearman ρ against the oracle ranking.
+- Fastest (1 call per pilot) but degrades on long lists as context grows.
+
+---
+
+### B · Pairwise — Bradley-Terry model
+
+Each LLM call presents exactly two options: *"Which is better for this pilot?"*
+Votes are aggregated into a global ranking via the **Bradley-Terry (BT) model**.
+
+#### Model
+
+$$P(i \text{ beats } j) = \frac{s_i}{s_i + s_j}$$
+
+where $s_i > 0$ is the latent strength of item $i$.
+
+#### Fitting — MM algorithm
+
+Strengths are estimated by maximising the log-likelihood via the
+Minorization-Maximization (MM) iterative update:
+
+$$s_i^{\text{new}} = \frac{W_i}{\displaystyle\sum_{(i,j)\in\text{comparisons}} \frac{1}{s_i + s_j}}$$
+
+where $W_i$ is the total number of wins for item $i$.
+
+- Initialised at $s_i = 1$ for all items.
+- Normalised after each iteration so $\max_i s_i = 1$.
+- Converges when $\max_i |s_i^{\text{new}} - s_i| < 10^{-9}$ (≤ 500 iterations).
+- Guaranteed convergence; no external solver required.
+
+**Zero-win floor**: items with $W_i = 0$ receive $s_i = 0.01$ instead of 0.
+This prevents rank collapse and ensures all items appear in the final ranking.
+
+#### Adaptive pair design (~N comparisons vs N(N−1)/2 brute force)
+
+**Round 1** — seeded shuffle → adjacent pairs:
+1. Fisher-Yates shuffle of all item IDs (seeded by `Date.now()`).
+2. Consecutive pairs from the shuffled list: $(L_1, L_2),\,(L_3, L_4),\ldots$
+3. For odd $N$, the last item wraps back to pair with the first → exactly $\lceil N/2 \rceil$ comparisons.
+
+**Round 2** — targeted uncertain pairs:
+1. Fit a provisional BT model on Round-1 results.
+2. Add pairs $(i, j)$ where $|\text{rank}_i - \text{rank}_j| \leq 2$ that have not yet been compared.
+3. Fit the final BT model on all comparisons combined.
+
+Total comparisons: $\approx \lceil N/2 \rceil + \text{a few}$, vs $\binom{N}{2}$ for full round-robin.
+
+---
+
+### C · Scoring — independent scores with CI-overlap tie detection
+
+Each item is scored independently on a 0–100 scale. One LLM call per item.
+
+#### Personalised calibration anchor
+
+Every prompt includes a pilot-specific rubric block with concrete examples:
+
+| Score range | Meaning for this pilot |
+|---|---|
+| 90–100 | Ideal: home same day, preferred aircraft, report after 07:00 |
+| 45–55 | Acceptable: one overnight, mixed fleet, moderate TAFB |
+| 0–15 | Unacceptable: 2+ nights, wrong aircraft, pre-05:00 report |
+
+This anchors the LLM's scale to the individual pilot's preferences rather than a
+generic rubric.
+
+#### Multi-run aggregation
+
+- 2 runs → final score = mean.
+- 3 runs → final score = median (triggered when consistency is unstable after run 2).
+
+#### Tie detection (CI-overlap)
+
+Items $A$ and $B$ are marked **tied** if their score intervals overlap:
+
+$$(\mu_A - \sigma_A \leq \mu_B + \sigma_B) \;\text{AND}\; (\mu_B - \sigma_B \leq \mu_A + \sigma_A)$$
+
+where $\mu$ is the mean score and $\sigma$ is the standard deviation across runs.
+Overlapping intervals indicate the LLM cannot reliably distinguish the two items.
+
+**Oracle tie parameters** (ground-truth grouping):
+- Threshold: ±3 points between adjacent items triggers a tie.
+- Max group size: 3 items; groups larger than 3 are split using item ID as a tiebreaker.
+
+---
+
 ## Evaluation metrics
 
-- **Spearman ρ**: rank correlation between LLM and oracle (-1 to 1)
-- **Top-1 match**: did LLM pick oracle's #1 choice?
-- **Eligibility accuracy**: correct aircraft qualification flags
+- **Spearman ρ**: rank correlation between LLM and oracle (−1 to 1).
+  Converts both lists to rank positions (1st, 2nd, …) and measures order similarity.
+  Tied items receive average ranks.
+- **Top-1 match**: did the LLM's #1 choice match the oracle's #1 choice?
+- **Eligibility accuracy**: fraction of items correctly flagged as qualified/unqualified.
+- **Overall score** (0–100): `0.60 × ρ_normalised + 0.25 × top1 + 0.15 × eligibility`
+  where ρ is normalised from [−1, 1] to [0, 1].
 
 Note: these measure agreement with the oracle, not absolute pilot truth.
 
