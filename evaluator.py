@@ -20,8 +20,16 @@ Note on ties:
 """
 
 import math
-from typing import List, Optional, Tuple
-from models import EvalMetrics, LLMLineRank, LLMPairingRank, Pilot, RankedLine, RankedPairing
+import random
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+from scipy.optimize import minimize
+
+from models import (
+    AdaptivePairwiseResult, EvalMetrics, LLMLineRank, LLMPairingRank,
+    Pilot, PairwiseComparison, RankedLine, RankedPairing,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -365,3 +373,263 @@ def detect_cycle(
             return list(cycle) + [a]  # e.g. [1, 2, 3, 1]
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Bradley-Terry model
+# ---------------------------------------------------------------------------
+
+class BradleyTerryModel:
+    """
+    Fits a Bradley-Terry model from pairwise comparison outcomes.
+
+    The probability that item i beats item j is:
+      P(i beats j) = strength_i / (strength_i + strength_j)
+
+    Strengths are fitted via maximum likelihood estimation.
+    Items with higher fitted strength rank higher.
+
+    Handles cycles and inconsistencies gracefully — finds the
+    ranking that best explains all observed comparisons.
+    """
+
+    def __init__(self, item_ids: List[int]):
+        self._ids: List[int] = list(item_ids)
+        self._idx: Dict[int, int] = {iid: i for i, iid in enumerate(self._ids)}
+        self._comparisons: List[Tuple[int, int]] = []   # (winner_idx, loser_idx)
+        self._theta: Optional[np.ndarray] = None        # log-strengths after fit
+        self._fitted = False
+
+    # ------------------------------------------------------------------
+    def add_comparison(self, winner_id: int, loser_id: int) -> None:
+        """Record one pairwise comparison outcome."""
+        self._comparisons.append((self._idx[winner_id], self._idx[loser_id]))
+        self._fitted = False
+
+    def add_maxdiff(self, best_id: int, worst_id: int, other_ids: List[int]) -> None:
+        """
+        Record a MaxDiff observation:
+          best beats every other item in the set
+          every other item beats worst
+        """
+        all_others = [iid for iid in other_ids if iid != best_id and iid != worst_id]
+        for oid in all_others:
+            self.add_comparison(best_id, oid)
+            self.add_comparison(oid, worst_id)
+        self.add_comparison(best_id, worst_id)
+
+    # ------------------------------------------------------------------
+    def fit(self) -> bool:
+        """
+        Fit via MLE using log-parameterisation for numerical stability.
+        theta[0] fixed at 0 for identifiability.
+        Returns True if convergence achieved.
+        """
+        n = len(self._ids)
+        if n < 2 or not self._comparisons:
+            self._theta = np.zeros(n)
+            self._fitted = True
+            return True
+
+        def neg_log_likelihood(theta_free: np.ndarray) -> float:
+            theta = np.concatenate([[0.0], theta_free])
+            total = 0.0
+            for wi, li in self._comparisons:
+                # log P(wi beats li) = theta_wi - log(exp(theta_wi) + exp(theta_li))
+                tw, tl = theta[wi], theta[li]
+                # numerically stable via log-sum-exp
+                total += tw - np.logaddexp(tw, tl)
+            return -total
+
+        x0 = np.zeros(n - 1)
+        result = minimize(neg_log_likelihood, x0, method="L-BFGS-B",
+                          options={"maxiter": 1000, "ftol": 1e-10})
+        self._theta = np.concatenate([[0.0], result.x])
+        self._fitted = True
+        return bool(result.success)
+
+    # ------------------------------------------------------------------
+    def _ensure_fitted(self) -> None:
+        if not self._fitted:
+            self.fit()
+
+    def ranking(self) -> List[Tuple[int, float]]:
+        """Returns list of (item_id, strength) sorted best to worst."""
+        self._ensure_fitted()
+        strengths = [(iid, float(np.exp(self._theta[i])))
+                     for i, iid in enumerate(self._ids)]
+        return sorted(strengths, key=lambda x: -x[1])
+
+    def rank_positions(self) -> Dict[int, int]:
+        """Returns dict: item_id → rank (1=best)."""
+        return {iid: rank for rank, (iid, _) in enumerate(self.ranking(), start=1)}
+
+    # ------------------------------------------------------------------
+    def confidence_intervals(
+        self, n_bootstrap: int = 100
+    ) -> Dict[int, Tuple[float, float]]:
+        """
+        Bootstrap confidence intervals on rank positions.
+        Resample observed comparisons with replacement n_bootstrap times,
+        refit model each time, record rank position distribution.
+        Returns dict: item_id → (lower_rank, upper_rank) at 90% CI.
+        A wide interval means this item's rank position is uncertain.
+        """
+        self._ensure_fitted()
+        n_comp = len(self._comparisons)
+        rank_samples: Dict[int, List[int]] = {iid: [] for iid in self._ids}
+
+        for _ in range(n_bootstrap):
+            boot_model = BradleyTerryModel(self._ids)
+            if n_comp > 0:
+                indices = [random.randrange(n_comp) for _ in range(n_comp)]
+                for idx in indices:
+                    wi, li = self._comparisons[idx]
+                    boot_model.add_comparison(self._ids[wi], self._ids[li])
+            boot_model.fit()
+            for iid, rank in boot_model.rank_positions().items():
+                rank_samples[iid].append(rank)
+
+        ci: Dict[int, Tuple[float, float]] = {}
+        for iid, samples in rank_samples.items():
+            if samples:
+                lower = float(np.percentile(samples, 5))
+                upper = float(np.percentile(samples, 95))
+            else:
+                r = self.rank_positions().get(iid, 1)
+                lower, upper = float(r), float(r)
+            ci[iid] = (lower, upper)
+        return ci
+
+    # ------------------------------------------------------------------
+    def fit_quality(self) -> float:
+        """
+        Returns proportion of observed comparisons correctly predicted
+        by the fitted model (analogous to accuracy).
+        Compare to human baseline of ~70-85% (inconsistency rate 15-30%).
+        """
+        self._ensure_fitted()
+        if not self._comparisons:
+            return 1.0
+        correct = 0
+        for wi, li in self._comparisons:
+            if self._theta[wi] >= self._theta[li]:
+                correct += 1
+        return correct / len(self._comparisons)
+
+    # ------------------------------------------------------------------
+    def summary(self) -> str:
+        """Human-readable summary of ranking with confidence intervals."""
+        self._ensure_fitted()
+        ranked = self.ranking()
+        ci = self.confidence_intervals(n_bootstrap=100)
+        fq = self.fit_quality()
+        lines = [f"Bradley-Terry ranking ({len(self._ids)} items, fit quality {fq:.0%}):"]
+        for rank, (iid, strength) in enumerate(ranked, start=1):
+            lo, hi = ci[iid]
+            lines.append(f"  #{rank}  item {iid}  strength={strength:.3f}  90%CI=[{lo:.0f},{hi:.0f}]")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Adaptive comparison design
+# ---------------------------------------------------------------------------
+
+def design_adaptive_comparisons(
+    item_ids: List[int],
+    provisional_ranking: Optional[List[int]] = None,
+    n_uncertain_threshold: int = 2,
+) -> List[Tuple[int, int]]:
+    """
+    Design a minimal set of pairwise comparisons.
+
+    Round 1 (always):
+      Compare adjacent pairs in randomised order.
+      For N items: ceil(N/2) comparisons.
+
+    Round 2 (adaptive):
+      After round 1, fit a provisional BT model.
+      Identify uncertain pairs: items where |rank_i - rank_j| <= n_uncertain_threshold
+      AND the pair was not compared in round 1.
+      Add these pairs to round 2.
+
+    Returns list of (item_a_id, item_b_id) tuples for all rounds.
+    """
+    ids = list(item_ids)
+    random.shuffle(ids)
+
+    # Round 1: adjacent pairs
+    round1: List[Tuple[int, int]] = []
+    for i in range(0, len(ids) - 1, 2):
+        round1.append((ids[i], ids[i + 1]))
+
+    if not provisional_ranking:
+        return round1
+
+    # Round 2: uncertain pairs from provisional ranking
+    round1_set = {(min(a, b), max(a, b)) for a, b in round1}
+    rank_pos = {iid: r for r, iid in enumerate(provisional_ranking)}
+
+    round2: List[Tuple[int, int]] = []
+    for i in range(len(provisional_ranking)):
+        for j in range(i + 1, len(provisional_ranking)):
+            a, b = provisional_ranking[i], provisional_ranking[j]
+            if abs(rank_pos[a] - rank_pos[b]) <= n_uncertain_threshold:
+                key = (min(a, b), max(a, b))
+                if key not in round1_set:
+                    round2.append((a, b))
+
+    return round1 + round2
+
+
+# ---------------------------------------------------------------------------
+# Run adaptive pairwise — fit BT model from completed comparisons
+# ---------------------------------------------------------------------------
+
+def run_adaptive_pairwise(
+    pilot: Pilot,
+    items: List,
+    comparisons: List[PairwiseComparison],
+    n_uncertain_threshold: int = 2,
+) -> AdaptivePairwiseResult:
+    """
+    Given completed pairwise comparisons, fit Bradley-Terry model
+    and return full ranking with confidence intervals.
+    """
+    item_ids = [item.id for item in items]
+    model = BradleyTerryModel(item_ids)
+    for comp in comparisons:
+        model.add_comparison(comp.winner_id,
+                             comp.item_b_id if comp.winner_id == comp.item_a_id
+                             else comp.item_a_id)
+
+    model.fit()
+    final_ranking = model.ranking()
+    rank_pos = model.rank_positions()
+    ci = model.confidence_intervals(n_bootstrap=100)
+    fq = model.fit_quality()
+
+    n_rounds = max((c.round_num for c in comparisons), default=1)
+
+    if fq >= 0.85:
+        note = f"High consistency (fit quality {fq:.0%}) — above human baseline"
+    elif fq >= 0.70:
+        note = f"Moderate consistency ({fq:.0%}) — within human baseline range"
+    else:
+        note = (
+            f"Low consistency ({fq:.0%}) — below human baseline "
+            f"(15-30% human error rate implies ~70-85% fit quality)"
+        )
+
+    return AdaptivePairwiseResult(
+        pilot=pilot,
+        comparisons=comparisons,
+        bt_model=model,
+        final_ranking=final_ranking,
+        rank_positions=rank_pos,
+        confidence_intervals=ci,
+        fit_quality=fq,
+        n_comparisons=len(comparisons),
+        n_rounds=n_rounds,
+        consistency_note=note,
+    )

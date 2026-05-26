@@ -29,15 +29,19 @@ import sys
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from models import LLMLineRank, LLMPairingRank, LineScoringResult, ScoredPairing, Pilot, Pairing, OracleWeights
+from models import (
+    AdaptivePairwiseResult, LLMLineRank, LLMPairingRank, LineScoringResult,
+    PairwiseComparison, ScoredPairing, Pilot, Pairing, OracleWeights,
+)
 from generator import ScenarioGenerator
 from oracle import oracle_rank_all, oracle_rank_lines, oracle_rank_pilot
 from prompt_builder import (
-    generate_anchor, generate_line_anchor,
-    independent_scoring_line_prompt, oracle_line_prompt, oracle_prompt,
+    adaptive_pairwise_prompt, generate_anchor, generate_line_anchor,
+    independent_scoring_line_prompt, maxdiff_prompt, oracle_line_prompt, oracle_prompt,
     pairwise_line_prompt, pairwise_prompt, scoring_prompt,
 )
 from evaluator import (
+    BradleyTerryModel, design_adaptive_comparisons, run_adaptive_pairwise,
     evaluate_line_pilot, evaluate_pilot,
     pairwise_agreement, pairwise_summary, evaluate_scoring_stability,
 )
@@ -1107,6 +1111,330 @@ details[open]>summary{border-radius:6px 6px 0 0;border-bottom:1px solid #d1d5db}
 
 
 # ---------------------------------------------------------------------------
+# Adaptive pairwise / MaxDiff runners
+# ---------------------------------------------------------------------------
+
+def _spearman_from_bt(
+    bt_ranking: List[Tuple[int, float]],
+    oracle_ranked,          # List[RankedLine] or List[RankedPairing]
+    is_line: bool,
+) -> float:
+    """Compute Spearman ρ between BT ranking and oracle ranking."""
+    if is_line:
+        oracle_map = {r.line.id: r.oracle_rank for r in oracle_ranked}
+    else:
+        oracle_map = {r.pairing.id: r.oracle_rank for r in oracle_ranked}
+
+    pairs = []
+    for bt_rank, (iid, _) in enumerate(bt_ranking, start=1):
+        if iid in oracle_map:
+            pairs.append((bt_rank, oracle_map[iid]))
+
+    n = len(pairs)
+    if n < 2:
+        return 0.0
+    llm_r = [p[0] for p in pairs]
+    ora_r = [p[1] for p in pairs]
+    lm = sum(llm_r) / n
+    om = sum(ora_r) / n
+    num = sum((l - lm) * (o - om) for l, o in zip(llm_r, ora_r))
+    dl = math.sqrt(sum((l - lm) ** 2 for l in llm_r))
+    do = math.sqrt(sum((o - om) ** 2 for o in ora_r))
+    if dl == 0 or do == 0:
+        return 0.0
+    return round(num / (dl * do), 2)
+
+
+def run_adaptive_pairwise_mode(
+    pilots: List[Pilot],
+    items: List,
+    oracle_rankings_by_name: dict,
+    is_line: bool,
+) -> Dict[int, AdaptivePairwiseResult]:
+    """
+    Manual adaptive pairwise mode — print prompts and collect responses.
+
+    For each pilot:
+      Round 1: run ceil(N/2) comparisons.
+      Fit provisional BT model.
+      Round 2: run comparisons on uncertain adjacent pairs.
+      Fit final BT model and compute CIs.
+    """
+    results: Dict[int, AdaptivePairwiseResult] = {}
+    item_ids = [item.id for item in items]
+
+    for pilot in pilots:
+        print(f"\n{'='*60}")
+        print(f"ADAPTIVE PAIRWISE — Capt. {pilot.name}")
+        print(f"{'='*60}")
+
+        all_comparisons: List[PairwiseComparison] = []
+
+        # Round 1 pairs
+        r1_pairs = design_adaptive_comparisons(item_ids)
+        print(f"\nRound 1: {len(r1_pairs)} comparison(s) of {len(item_ids)} items")
+
+        item_map = {item.id: item for item in items}
+        for pair_num, (a_id, b_id) in enumerate(r1_pairs, start=1):
+            item_a = item_map[a_id]
+            item_b = item_map[b_id]
+            prompt = adaptive_pairwise_prompt(pilot, item_a, item_b, round_num=1)
+            print(f"\n--- Round 1, Comparison {pair_num}/{len(r1_pairs)} ---")
+            print(prompt)
+            print("\nPaste JSON response:")
+            raw = input().strip()
+            try:
+                import json as _json
+                d = _json.loads(raw.replace("```json", "").replace("```", "").strip())
+                winner_num = int(d["winner"])
+                winner_id = a_id if winner_num == 1 else b_id
+                all_comparisons.append(PairwiseComparison(
+                    item_a_id=a_id, item_b_id=b_id, winner_id=winner_id,
+                    confidence=d.get("confidence", "?"),
+                    reason=d.get("reason", ""),
+                    round_num=1,
+                ))
+            except Exception as e:
+                print(f"  ⚠ Parse error: {e} — skipping")
+
+        # Provisional ranking after round 1
+        prov_model = BradleyTerryModel(item_ids)
+        for comp in all_comparisons:
+            prov_model.add_comparison(comp.winner_id,
+                                      comp.item_b_id if comp.winner_id == comp.item_a_id
+                                      else comp.item_a_id)
+        prov_model.fit()
+        prov_ranking = [iid for iid, _ in prov_model.ranking()]
+
+        # Round 2 pairs
+        all_pairs = design_adaptive_comparisons(item_ids, provisional_ranking=prov_ranking)
+        r1_set = {(min(a, b), max(a, b)) for a, b in r1_pairs}
+        r2_pairs = [(a, b) for a, b in all_pairs
+                    if (min(a, b), max(a, b)) not in r1_set]
+
+        if r2_pairs:
+            print(f"\nRound 2: {len(r2_pairs)} uncertain pair comparison(s)")
+            for pair_num, (a_id, b_id) in enumerate(r2_pairs, start=1):
+                item_a = item_map[a_id]
+                item_b = item_map[b_id]
+                a_rank = prov_ranking.index(a_id) + 1
+                b_rank = prov_ranking.index(b_id) + 1
+                context = (f"Provisional ranking suggests item {a_id} is around "
+                           f"#{a_rank} and item {b_id} is around #{b_rank}.")
+                prompt = adaptive_pairwise_prompt(
+                    pilot, item_a, item_b, round_num=2, context=context
+                )
+                print(f"\n--- Round 2, Comparison {pair_num}/{len(r2_pairs)} ---")
+                print(prompt)
+                print("\nPaste JSON response:")
+                raw = input().strip()
+                try:
+                    import json as _json
+                    d = _json.loads(raw.replace("```json", "").replace("```", "").strip())
+                    winner_num = int(d["winner"])
+                    winner_id = a_id if winner_num == 1 else b_id
+                    all_comparisons.append(PairwiseComparison(
+                        item_a_id=a_id, item_b_id=b_id, winner_id=winner_id,
+                        confidence=d.get("confidence", "?"),
+                        reason=d.get("reason", ""),
+                        round_num=2,
+                    ))
+                except Exception as e:
+                    print(f"  ⚠ Parse error: {e} — skipping")
+
+        result = run_adaptive_pairwise(pilot, items, all_comparisons)
+        results[pilot.id] = result
+
+        oracle_ranked = oracle_rankings_by_name[pilot.name]
+        rho = _spearman_from_bt(result.final_ranking, oracle_ranked, is_line)
+        n_full = len(item_ids) * (len(item_ids) - 1) // 2
+        print(f"\nResults for Capt. {pilot.name}:")
+        print(f"  Comparisons used: {result.n_comparisons} (vs {n_full} full pairwise)")
+        print(f"  {result.consistency_note}")
+        print(f"  Spearman ρ vs oracle: {rho}")
+        print(result.bt_model.summary())
+
+    return results
+
+
+def run_maxdiff_mode(
+    pilots: List[Pilot],
+    items: List,
+    oracle_rankings_by_name: dict,
+    is_line: bool,
+    group_size: int = 4,
+) -> Dict[int, AdaptivePairwiseResult]:
+    """
+    Manual MaxDiff mode — show groups of 4-5 items, collect best/worst.
+    Fits BT model from best/worst choices.
+    """
+    import json as _json
+    import math as _math
+    results: Dict[int, AdaptivePairwiseResult] = {}
+    item_ids = [item.id for item in items]
+    item_map = {item.id: item for item in items}
+
+    # Build groups of group_size
+    shuffled = list(items)
+    random.shuffle(shuffled)
+    groups = [shuffled[i:i + group_size] for i in range(0, len(shuffled), group_size)]
+    if groups and len(groups[-1]) < 2:
+        # merge tiny last group into previous
+        groups[-2].extend(groups.pop())
+
+    for pilot in pilots:
+        print(f"\n{'='*60}")
+        print(f"MAXDIFF — Capt. {pilot.name}")
+        print(f"{'='*60}")
+
+        all_comparisons: List[PairwiseComparison] = []
+        model = BradleyTerryModel(item_ids)
+
+        for g_idx, group in enumerate(groups):
+            g_ids = [item.id for item in group]
+            nums = list(range(1, len(group) + 1))
+            prompt = maxdiff_prompt(pilot, group, nums)
+            print(f"\n--- Group {g_idx + 1}/{len(groups)} ({len(group)} items) ---")
+            print(prompt)
+            print("\nPaste JSON response:")
+            raw = input().strip()
+            try:
+                d = _json.loads(raw.replace("```json", "").replace("```", "").strip())
+                best_num = int(d["best"]) - 1
+                worst_num = int(d["worst"]) - 1
+                best_id = g_ids[best_num]
+                worst_id = g_ids[worst_num]
+                model.add_maxdiff(best_id, worst_id,
+                                  [iid for iid in g_ids if iid != best_id and iid != worst_id])
+                # Record as synthetic pairwise comparisons
+                for oid in g_ids:
+                    if oid == best_id:
+                        continue
+                    all_comparisons.append(PairwiseComparison(
+                        item_a_id=best_id, item_b_id=oid, winner_id=best_id,
+                        confidence="high", reason=d.get("reason_best", ""),
+                        round_num=1,
+                    ))
+                for oid in g_ids:
+                    if oid == worst_id or oid == best_id:
+                        continue
+                    all_comparisons.append(PairwiseComparison(
+                        item_a_id=oid, item_b_id=worst_id, winner_id=oid,
+                        confidence="high", reason=d.get("reason_worst", ""),
+                        round_num=1,
+                    ))
+            except Exception as e:
+                print(f"  ⚠ Parse error: {e} — skipping")
+
+        model.fit()
+        final_ranking = model.ranking()
+        rank_pos = model.rank_positions()
+        ci = model.confidence_intervals(n_bootstrap=100)
+        fq = model.fit_quality()
+
+        if fq >= 0.85:
+            note = f"High consistency (fit quality {fq:.0%}) — above human baseline"
+        elif fq >= 0.70:
+            note = f"Moderate consistency ({fq:.0%}) — within human baseline range"
+        else:
+            note = (
+                f"Low consistency ({fq:.0%}) — below human baseline "
+                f"(15-30% human error rate implies ~70-85% fit quality)"
+            )
+
+        result = AdaptivePairwiseResult(
+            pilot=pilot,
+            comparisons=all_comparisons,
+            bt_model=model,
+            final_ranking=final_ranking,
+            rank_positions=rank_pos,
+            confidence_intervals=ci,
+            fit_quality=fq,
+            n_comparisons=len(all_comparisons),
+            n_rounds=1,
+            consistency_note=note,
+        )
+        results[pilot.id] = result
+
+        oracle_ranked = oracle_rankings_by_name[pilot.name]
+        rho = _spearman_from_bt(result.final_ranking, oracle_ranked, is_line)
+        n_full = len(item_ids) * (len(item_ids) - 1) // 2
+        print(f"\nResults for Capt. {pilot.name}:")
+        print(f"  MaxDiff groups: {len(groups)}, implied comparisons: {result.n_comparisons}")
+        print(f"  (vs {n_full} full pairwise)")
+        print(f"  {result.consistency_note}")
+        print(f"  Spearman ρ vs oracle: {rho}")
+        print(result.bt_model.summary())
+
+    return results
+
+
+def export_adaptive_results(
+    adaptive_results: Dict[int, AdaptivePairwiseResult],
+    pilots: List[Pilot],
+    items: List,
+    oracle_rankings_by_name: dict,
+    is_line: bool,
+) -> dict:
+    """Build export dict for adaptive pairwise / maxdiff results."""
+    item_ids = [item.id for item in items]
+    n_full = len(item_ids) * (len(item_ids) - 1) // 2
+
+    return {
+        "mode": "adaptive_pairwise",
+        "n_full_pairwise": n_full,
+        "pilots": {
+            pilot.name: _format_adaptive_pilot(
+                adaptive_results[pilot.id],
+                oracle_rankings_by_name[pilot.name],
+                is_line,
+                n_full,
+            )
+            for pilot in pilots
+            if pilot.id in adaptive_results
+        },
+    }
+
+
+def _format_adaptive_pilot(
+    result: AdaptivePairwiseResult,
+    oracle_ranked,
+    is_line: bool,
+    n_full: int,
+) -> dict:
+    rho = _spearman_from_bt(result.final_ranking, oracle_ranked, is_line)
+    return {
+        "n_comparisons":      result.n_comparisons,
+        "n_comparisons_full": n_full,
+        "n_rounds":           result.n_rounds,
+        "fit_quality":        round(result.fit_quality, 3),
+        "consistency_note":   result.consistency_note,
+        "spearman_vs_oracle": rho,
+        "ranking": [
+            {
+                "item_id":  iid,
+                "strength": round(strength, 4),
+                "rank":     result.rank_positions[iid],
+                "ci_low":   round(result.confidence_intervals[iid][0], 1),
+                "ci_high":  round(result.confidence_intervals[iid][1], 1),
+            }
+            for iid, strength in result.final_ranking
+        ],
+        "comparisons": [
+            {
+                "item_a": c.item_a_id,
+                "item_b": c.item_b_id,
+                "winner": c.winner_id,
+                "confidence": c.confidence,
+                "reason": c.reason,
+                "round": c.round_num,
+            }
+            for c in result.comparisons
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1117,11 +1445,13 @@ def main():
     parser.add_argument("--model",    default="gpt-4o",      help="Model name")
     parser.add_argument(
         "--mode",
-        choices=["oracle", "scoring"],
+        choices=["oracle", "scoring", "adaptive_pairwise", "maxdiff"],
         default="oracle",
         help=(
-            'LLM testing approach: \"oracle\" = compare-all-at-once (single rank-all prompt per pilot); '
-            '"scoring" = independent 0–100 per pairing (oracle ground truth from weights is always computed).'
+            'LLM testing approach: "oracle" = compare-all-at-once; '
+            '"scoring" = independent 0–100 per item; '
+            '"adaptive_pairwise" = Bradley-Terry with ~2N comparisons; '
+            '"maxdiff" = MaxDiff scaling with BT model.'
         ),
     )
     parser.set_defaults(lines=True)
@@ -1245,6 +1575,31 @@ def main():
                     top = scored_by_pilot[pilot.id][0] if scored_by_pilot[pilot.id] else None
                     score_str = f"best = P{top.pairing.id} (score {top.score})" if top else "no results"
                     print(f"  Capt. {pilot.name}: {score_str}")
+    elif args.mode in ("adaptive_pairwise", "maxdiff"):
+        # Adaptive pairwise and MaxDiff modes — run to completion and export, then exit.
+        items     = lines if args.lines else pairings
+        is_line   = args.lines
+        oracle_by_name = oracle_line_rankings if is_line else oracle_rankings
+
+        print(f"\n[3/5] Running {args.mode} comparison ({len(items)} items)…")
+        if args.mode == "adaptive_pairwise":
+            adaptive_results = run_adaptive_pairwise_mode(
+                pilots, items, oracle_by_name, is_line
+            )
+        else:
+            adaptive_results = run_maxdiff_mode(
+                pilots, items, oracle_by_name, is_line
+            )
+
+        export = export_adaptive_results(
+            adaptive_results, pilots, items, oracle_by_name, is_line
+        )
+        out_json = args.output.replace(".html", f"_{args.mode}.json")
+        with open(out_json, "w", encoding="utf-8") as f:
+            json.dump(export, f, indent=2)
+        print(f"\n✓ Adaptive results exported to {out_json}")
+        return
+
     else:
         print(f"\n[3/5] {'Calling LLM API' if args.auto else 'Collecting LLM responses (manual)'}...")
         if args.auto:
@@ -1261,7 +1616,7 @@ def main():
     eval_metrics = {}
 
     if args.lines:
-        if args.mode != "scoring":
+        if args.mode not in ("scoring", "adaptive_pairwise", "maxdiff"):
             # Collect line rankings via rank-all oracle prompt (manual or automated)
             llm_line_rankings = {}
             if not args.auto:

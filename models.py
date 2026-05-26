@@ -5,8 +5,13 @@ Dataclasses for the pilot bidding simulation.
 Mirrors the data structures in the HTML POC.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from evaluator import BradleyTerryModel
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +96,9 @@ class Pairing:
 
     @property
     def credit_hours(self) -> float:
-        """Credit hours = max(actual block, guaranteed minimum)."""
-        guarantee = max(4.0, self.num_legs * 0.5)
-        return round(max(self.block_hours, guarantee), 1)
+        """Credit hours = max(block, 1-for-3.5 rotation rig) per Section 12 K."""
+        rotation_credit = self.tafb / 3.5
+        return round(max(self.block_hours, rotation_credit), 1)
 
     @property
     def tafb(self) -> float:
@@ -112,8 +117,8 @@ class Pairing:
 
     @property
     def per_diem(self) -> int:
-        """Per diem = TAFB × $2.50, rounded to nearest dollar."""
-        return round(self.tafb * 2.5)
+        """Per diem = TAFB × $2.85, per Delta 2023 Section 5."""
+        return round(self.tafb * 2.85)
 
     @property
     def cities(self) -> List[str]:
@@ -430,3 +435,31 @@ class LLMLineRank:
     short_reason: str
     pros:         List[str]
     cons:         List[str]
+
+
+# ---------------------------------------------------------------------------
+# Adaptive pairwise comparison models
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PairwiseComparison:
+    item_a_id:  int     # line or pairing id
+    item_b_id:  int
+    winner_id:  int     # must be item_a_id or item_b_id
+    confidence: str     # high / medium / low
+    reason:     str
+    round_num:  int     # 1 = initial, 2 = adaptive follow-up
+
+
+@dataclass
+class AdaptivePairwiseResult:
+    pilot:            Pilot
+    comparisons:      List[PairwiseComparison]
+    bt_model:         BradleyTerryModel
+    final_ranking:    List[Tuple[int, float]]   # (item_id, strength)
+    rank_positions:   Dict[int, int]            # item_id → rank
+    confidence_intervals: Dict[int, Tuple[float, float]]
+    fit_quality:      float
+    n_comparisons:    int
+    n_rounds:         int
+    consistency_note: str  # e.g. "fit quality 0.82, comparable to human baseline"

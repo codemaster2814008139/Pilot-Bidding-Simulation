@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -181,6 +181,7 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
   <button class="tab" id="tab-btn-eval" onclick="switchTab('eval')">Evaluate</button>
   <button class="tab" id="tab-btn-alloc" onclick="switchTab('alloc')">Allocation</button>
   <button class="tab" id="tab-btn-log" onclick="switchTab('log')">Log</button>
+  <button class="tab" id="tab-btn-results" onclick="switchTab('results')">Results</button>
 </div>
 
 <div class="panel active" id="tab-setup">
@@ -229,30 +230,42 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
     </p>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
 
-      <div class="card" style="cursor:pointer;transition:border-color 0.15s" id="modeCard-rankall" onclick="selectMode('rankall')">
-        <div style="font-size:13px;font-weight:500;color:#2563eb;margin-bottom:6px">A · Compare all at once</div>
-        <div style="font-size:11px;color:#555;font-family:monospace;line-height:1.8">
-          One prompt asks the LLM to rank <em>every</em> pairing (or line). Compare that full ranking against the oracle from your weights.<br><br>
-          <span style="color:#888">Best for: one-shot comparison vs the oracle baseline.</span>
-        </div>
-        <div style="margin-top:10px;font-size:10px;font-family:monospace;color:#bbb">Oracle weights tab → Prompts tab → Evaluate (this mode)</div>
-      </div>
-      <div class="card" style="cursor:pointer;transition:border-color 0.15s" id="modeCard-pairwise" onclick="selectMode('pairwise')">
-        <div style="font-size:13px;font-weight:500;color:#16a34a;margin-bottom:6px">B · Pairwise</div>
-        <div style="font-size:11px;color:#555;font-family:monospace;line-height:1.8">
-          The LLM picks the better of two pairings per call. Builds a ranking over many comparisons — still judged against the same oracle-derived ordering.<br><br>
-          <span style="color:#888">Best for: simpler prompts and lower pairwise noise vs one huge rank-all response.</span>
-        </div>
-        <div style="margin-top:10px;font-size:10px;font-family:monospace;color:#bbb">Requires: pick pilot + two pairings → copy prompt → paste response</div>
+      <!-- Rank-all -->
+      <div id="modeCard-rankall" onclick="selectMode('rankall')" style="border:1.5px solid #2563eb;border-radius:10px;padding:14px 16px;cursor:pointer;transition:box-shadow 0.15s">
+        <div style="font-size:12px;font-weight:700;color:#2563eb;margin-bottom:4px">A · Rank-all</div>
+        <div style="font-size:11px;color:#374151;margin-bottom:8px;font-style:italic">The AI sees everything at once and sorts it.</div>
+        <ul style="font-size:11px;color:#555;margin:0;padding-left:16px;line-height:1.8">
+          <li>The pilot's full profile and all options are given in one message</li>
+          <li>The AI returns a ranked list from best (#1) to worst in a single call per pilot</li>
+          <li>Simple and fast — fewest LLM calls of the three methods</li>
+          <li>Main limitation: on long lists the AI may lose track of earlier options, leading to inconsistent rankings across runs</li>
+        </ul>
       </div>
 
-      <div class="card" style="cursor:pointer;transition:border-color 0.15s" id="modeCard-scoring" onclick="selectMode('scoring')">
-        <div style="font-size:13px;font-weight:500;color:#9333ea;margin-bottom:6px">C · Scoring</div>
-        <div style="font-size:11px;color:#555;font-family:monospace;line-height:1.8">
-          Each pairing scored individually (0–100) for this pilot. Fully parallelisable — one API call per pairing. Scores are sorted to produce a ranking compared against the oracle.<br><br>
-          <span style="color:#888">Best for: large pairing sets; avoids prompt-length degradation.</span>
-        </div>
-        <div style="margin-top:10px;font-size:10px;font-family:monospace;color:#bbb">Requires backend proxy · one call per pairing per pilot</div>
+      <!-- Pairwise -->
+      <div id="modeCard-pairwise" onclick="selectMode('pairwise')" style="border:1.5px solid #16a34a;border-radius:10px;padding:14px 16px;cursor:pointer;transition:box-shadow 0.15s">
+        <div style="font-size:12px;font-weight:700;color:#16a34a;margin-bottom:4px">B · Pairwise</div>
+        <div style="font-size:11px;color:#374151;margin-bottom:8px;font-style:italic">Head-to-head matchups — like a mini tournament.</div>
+        <ul style="font-size:11px;color:#555;margin:0;padding-left:16px;line-height:1.8">
+          <li>The AI is shown just two options at a time and asked: <em>"which is better for this pilot?"</em></li>
+          <li>Much simpler per call — the AI stays focused without a long list to juggle</li>
+          <li>Votes feed into a <strong>ranking model (Bradley-Terry)</strong>: if A beats B and B beats C, A is ranked above C even without a direct matchup — the model infers a consistent global order from partial evidence</li>
+          <li>To keep costs down, only the most informative pairs are asked: a quick first round reveals the rough order, then a second round focuses on the close/uncertain matchups only</li>
+          <li>More reliable on long lists, but requires more LLM calls than Rank-all</li>
+        </ul>
+      </div>
+
+      <!-- Scoring -->
+      <div id="modeCard-scoring" onclick="selectMode('scoring')" style="border:1.5px solid #9333ea;border-radius:10px;padding:14px 16px;cursor:pointer;transition:box-shadow 0.15s">
+        <div style="font-size:12px;font-weight:700;color:#9333ea;margin-bottom:4px">C · Scoring</div>
+        <div style="font-size:11px;color:#374151;margin-bottom:8px;font-style:italic">Each option gets an independent score, like a rubric.</div>
+        <ul style="font-size:11px;color:#555;margin:0;padding-left:16px;line-height:1.8">
+          <li>The AI rates each option separately on a 0–100 scale — one call per option</li>
+          <li>Each prompt includes a personalised <strong>calibration anchor</strong>: concrete examples of what 90–100, 45–55, and 0–15 look like <em>for this specific pilot</em> (e.g. "90–100 = home same day, preferred aircraft, report after 7 am")</li>
+          <li>The same option is scored in multiple independent runs; the final score is the average (or middle value of 3 runs) to smooth out random variation</li>
+          <li>Two options are marked <strong>tied</strong> if their score ranges overlap across runs — so a 72±8 and a 68±8 are treated as equivalent rather than forcing a false ordering</li>
+          <li>Easiest to scale: all calls are fully independent, so any number of options can be evaluated in parallel</li>
+        </ul>
       </div>
 
     </div>
@@ -311,8 +324,107 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
 <div class="panel" id="tab-eval">
 
+  <!-- Method explanations — plain-language overview for all three modes -->
+  <details style="margin-bottom:1.25rem">
+    <summary style="font-size:11px;font-family:monospace;color:#0369a1;cursor:pointer;user-select:none;padding:6px 0;font-weight:600">▶ How do the three methods work? (plain-language overview)</summary>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:10px">
+
+      <!-- Rank-all -->
+      <div style="border:1.5px solid #2563eb;border-radius:10px;padding:14px 16px">
+        <div style="font-size:12px;font-weight:700;color:#2563eb;margin-bottom:8px">Rank-all</div>
+        <div style="font-size:11px;color:#374151;margin-bottom:6px;font-style:italic">The AI sees everything at once and sorts it.</div>
+        <ul style="font-size:11px;color:#555;margin:0;padding-left:16px;line-height:1.8">
+          <li>The pilot's full profile and all options are given in one message</li>
+          <li>The AI returns a ranked list from best (#1) to worst in a single call per pilot</li>
+          <li>Simple and fast — fewest LLM calls of the three methods</li>
+          <li>Main limitation: on long lists the AI may lose track of earlier options, leading to inconsistent rankings across runs</li>
+        </ul>
+      </div>
+
+      <!-- Pairwise -->
+      <div style="border:1.5px solid #16a34a;border-radius:10px;padding:14px 16px">
+        <div style="font-size:12px;font-weight:700;color:#16a34a;margin-bottom:8px">Pairwise</div>
+        <div style="font-size:11px;color:#374151;margin-bottom:6px;font-style:italic">Head-to-head matchups — like a mini tournament.</div>
+        <ul style="font-size:11px;color:#555;margin:0;padding-left:16px;line-height:1.8">
+          <li>The AI is shown just two options at a time and asked: <em>"which is better for this pilot?"</em></li>
+          <li>Much simpler per call — the AI stays focused without a long list to juggle</li>
+          <li>Votes feed into a <strong>ranking model (Bradley-Terry)</strong>: if A beats B and B beats C, A is ranked above C even without a direct matchup — the model infers a consistent global order from partial evidence</li>
+          <li>To keep costs down, only the most informative pairs are asked: a quick first round reveals the rough order, then a second round focuses on the close/uncertain matchups only</li>
+          <li>More reliable on long lists, but requires more LLM calls than Rank-all</li>
+        </ul>
+      </div>
+
+      <!-- Scoring -->
+      <div style="border:1.5px solid #9333ea;border-radius:10px;padding:14px 16px">
+        <div style="font-size:12px;font-weight:700;color:#9333ea;margin-bottom:8px">Scoring</div>
+        <div style="font-size:11px;color:#374151;margin-bottom:6px;font-style:italic">Each option gets an independent score, like a rubric.</div>
+        <ul style="font-size:11px;color:#555;margin:0;padding-left:16px;line-height:1.8">
+          <li>The AI rates each option separately on a 0–100 scale — one call per option</li>
+          <li>Each prompt includes a personalised <strong>calibration anchor</strong>: concrete examples of what 90–100, 45–55, and 0–15 look like <em>for this specific pilot</em> (e.g. "90–100 = home same day, preferred aircraft, report after 7 am")</li>
+          <li>The same option is scored in multiple independent runs; the final score is the average (or middle value of 3 runs) to smooth out random variation</li>
+          <li>Two options are marked <strong>tied</strong> if their score ranges overlap across runs — so a 72±8 and a 68±8 are treated as equivalent rather than forcing a false ordering</li>
+          <li>Easiest to scale: all calls are fully independent, so any number of options can be evaluated in parallel</li>
+        </ul>
+      </div>
+
+    </div>
+  </details>
+
   <!-- MODE A: Compare all at once (LLM ranks full list vs oracle weights) -->
   <div id="mode-rankall">
+    <details style="margin-bottom:1rem">
+      <summary style="font-size:11px;font-family:monospace;color:#2563eb;cursor:pointer;user-select:none;padding:6px 0">▶ View prompt template (what the LLM receives)</summary>
+      <div class="card" style="margin-top:8px;background:#f8fafc">
+        <div style="font-size:11px;color:#555;font-family:monospace;margin-bottom:8px;line-height:1.7">
+          One prompt is sent per pilot. It contains the pilot's full profile, their preference priorities, and all pairings (or lines) listed in detail. The LLM must return a ranked JSON array.
+        </div>
+        <pre class="prompt-pre" style="max-height:260px">You are simulating a commercial airline pilot choosing which monthly pairing to bid for.
+
+== PILOT PROFILE ==
+Name: Capt. {name}
+Age: {age}
+Family status: {family status}
+Home base: {home base}
+Aircraft qualifications: {e.g. B737, B767}
+Preferred aircraft: {preferred type}
+Base pay rate: ${base pay}/hr
+
+== HOW THIS PILOT PRIORITISES ==
+{Personalised priority list — e.g. for a pilot with kids:}
+  1. Shorter TAFB (less time away from home)
+  2. Fewer hotel nights away
+  3. Report time — early reports strongly undesirable
+  4. Higher credit pay
+  5. Qualified aircraft type
+
+== AVAILABLE PAIRINGS ==
+  Pairing 1 — 3 legs, 2 nights away
+    Aircraft: Boeing 737 (B737) | Qualified: yes
+    Route: BOS→ORD→DEN→BOS
+    Leg 1: BOS → ORD, Departs Day 1 at 06:15, arrives Day 1 at 08:30 ...
+    Overnight 1: hotel in Denver (Standard)
+    TAFB: 52h | Block: 14.5h | Credit: 15h | Nights away: 2
+    Report time Day 1: 05:00
+    Your pay: $3,150 (15h × $210/hr) | Per diem: $130 | Total: $3,280
+  ...
+
+== TASK ==
+Rank all {N} pairings from best (#1) to worst for THIS pilot only.
+Reply ONLY with a raw JSON array — no explanation, no markdown, no code fences.
+
+[
+  {
+    "pairingId": 1,
+    "rank": 1,
+    "eligible": true,
+    "shortReason": "Short TAFB, no overnights, preferred aircraft",
+    "pros": ["home each night", "preferred B737"],
+    "cons": ["lower pay than longer trips"]
+  },
+  ...
+]</pre>
+      </div>
+    </details>
     <div class="progress-wrap"><div class="progress-bar" id="evalBar" style="width:0%"></div></div>
     <div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:1rem" id="evalProgressLabel">0 / 5 pilots scored</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
@@ -336,6 +448,49 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
   <!-- MODE B: Pairwise round-robin -->
   <div id="mode-pairwise" style="display:none">
+    <details style="margin-bottom:1rem">
+      <summary style="font-size:11px;font-family:monospace;color:#16a34a;cursor:pointer;user-select:none;padding:6px 0">▶ View prompt template (what the LLM receives)</summary>
+      <div class="card" style="margin-top:8px;background:#f8fafc">
+        <div style="font-size:11px;color:#555;font-family:monospace;margin-bottom:8px;line-height:1.7">
+          One prompt per pair comparison. The LLM sees only two options at a time and picks the better one. Each pilot with N eligible pairings generates N×(N−1)/2 comparisons, building a full ranking from pairwise votes.
+        </div>
+        <pre class="prompt-pre" style="max-height:260px">You are evaluating which of two flight pairings is better for a specific airline pilot.
+
+== PILOT PROFILE ==
+Name: Capt. {name}
+Age: {age}  |  Family: {family status}
+Aircraft qualifications: {e.g. B737, B767}
+Preferred aircraft: {preferred type}
+Base pay rate: ${base pay}/hr
+
+== HOW THIS PILOT PRIORITISES ==
+{Personalised priority list — same as rank-all mode}
+
+IMPORTANT: Both pairings listed below are ones the pilot is qualified for.
+Choose purely based on which better fits this pilot's preferences.
+
+== OPTION 1 ==
+  Pairing 3 — 2 legs, 0 nights away
+    Aircraft: Boeing 737 (B737) | Qualified: yes
+    Route: BOS→JFK→BOS
+    TAFB: 18h | Block: 7h | Credit: 7h
+    Report time: 07:30
+    Your pay: $1,470 | Per diem: $45 | Total: $1,515
+
+== OPTION 2 ==
+  Pairing 7 — 4 legs, 2 nights away
+    Aircraft: Boeing 767 (B767) | Qualified: yes
+    Route: BOS→LAX→SFO→ORD→BOS
+    TAFB: 68h | Block: 22h | Credit: 23h
+    Report time: 05:00
+    Your pay: $4,830 | Per diem: $170 | Total: $5,000
+
+== TASK ==
+Which pairing is better for this pilot?
+Reply ONLY with JSON (no markdown):
+{"winner": 1, "confidence": "high", "reason": "Option 1 is a same-day return with no overnights, perfectly suiting a pilot with family obligations."}</pre>
+      </div>
+    </details>
 
     <!-- Run all pilots header -->
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
@@ -404,6 +559,45 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
 
   <!-- MODE C: Scoring -->
   <div id="mode-scoring" style="display:none">
+    <details style="margin-bottom:1rem">
+      <summary style="font-size:11px;font-family:monospace;color:#9333ea;cursor:pointer;user-select:none;padding:6px 0">▶ View prompt template (what the LLM receives)</summary>
+      <div class="card" style="margin-top:8px;background:#f8fafc">
+        <div style="font-size:11px;color:#555;font-family:monospace;margin-bottom:8px;line-height:1.7">
+          One prompt per pairing (or line) per pilot — each call is fully independent. The LLM scores a single pairing 0–100 using a calibration anchor derived from the pilot's profile. Scores are sorted externally to produce the final ranking.
+        </div>
+        <pre class="prompt-pre" style="max-height:260px">You are evaluating how well a flight pairing fits a specific airline pilot's preferences.
+
+== PILOT PROFILE ==
+Name: Capt. {name}
+Age: {age}  |  Family: {family status}
+Aircraft qualifications: {e.g. B737, B767}
+Preferred aircraft: {preferred type}
+Base pay rate: ${base pay}/hr
+
+== SCORING CALIBRATION ==
+  90–100 (ideal): {e.g. "0 hotel nights, TAFB under 30h, B737, report after 8am, pay above $4,000"}
+  45–55  (acceptable): {e.g. "1–2 hotel nights, TAFB 40–55h, report 5–7am, pay ~$2,800"}
+  0–15   (unacceptable): {e.g. "wrong aircraft, TAFB over 70h, 2+ nights, report before 5am"}
+  Weight priorities: TAFB (35%), hotel nights (25%), report time (20%), aircraft (10%), pay (10%)
+
+== PAIRING TO EVALUATE ==
+  Pairing 5 — 3 legs, 1 night away
+    Aircraft: Boeing 737 (B737) | Qualified: yes
+    Route: BOS→MIA→ATL→BOS
+    Leg 1: BOS → MIA, Departs Day 1 at 07:00, arrives Day 1 at 10:30 ...
+    Overnight 1: hotel in Atlanta (Standard)
+    TAFB: 38h | Block: 11.5h | Credit: 12h | Nights away: 1
+    Report time Day 1: 06:00
+    Your pay: $2,520 (12h × $210/hr) | Per diem: $95 | Total: $2,615
+
+== TASK ==
+Score this pairing for this pilot on a scale of 0–100 using the calibration above.
+If the pilot is not qualified for the aircraft type, score must be 0.
+
+Reply ONLY with JSON (no markdown):
+{"score": 72, "eligible": true, "shortReason": "Preferred aircraft, 1 overnight, reasonable report time", "pros": ["B737 preferred type", "moderate TAFB"], "cons": ["one overnight away", "early-ish report"]}</pre>
+      </div>
+    </details>
 
     <!-- Pilot selector + controls -->
     <div class="card">
@@ -491,6 +685,26 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
   </div>
   <div style="font-size:11px;color:#bbb;font-family:monospace;margin-top:4px">
     Full JSON includes: scenario config, pilot profiles, pairings, oracle weights, LLM responses, scores, and pairwise comparisons. Load into Python with <code>json.load(open('results.json'))</code>.
+  </div>
+</div>
+
+<div class="panel" id="tab-results">
+  <div class="btn-row" style="margin-bottom:1rem">
+    <button class="btn primary" onclick="renderResults()">&#8635; Refresh charts</button>
+    <button class="btn" onclick="clearAllResults()">&#10005; Clear all results</button>
+  </div>
+  <div class="btn-row" style="margin-bottom:0.75rem">
+    <button class="btn" onclick="exportRankingsCsv()">[Export rankings.csv]</button>
+    <button class="btn" onclick="exportScoresCsv()">[Export scores.csv]</button>
+    <button class="btn" onclick="exportMetricsCsv()">[Export metrics.csv]</button>
+  </div>
+  <div class="btn-row" style="margin-bottom:1.5rem">
+    <button class="btn" onclick="saveComparisonSnapshot()">&#128190; Save snapshot</button>
+    <button class="btn" onclick="exportComparisonCsv()">[Export comparison.csv]</button>
+    <button class="btn" onclick="exportComparisonJson()">[Export comparison.json]</button>
+  </div>
+  <div id="resultsCharts">
+    <p style="font-size:12px;color:#888;font-family:monospace;padding:0.5rem">No results yet. Run an evaluation then click Refresh charts.</p>
   </div>
 </div>
 
@@ -623,10 +837,25 @@ function blockMins(dist,spd){
 ══════════════════════════════════════════ */
 let pilots=[], pairings=[], activePilot={setup:0,oracle:0,prompt:0,eval:0}, log=[];
 let lineMode=true, lines=[], linePairings=[];
-const N_LINES=20, PAIRINGS_PER_LINE=5;
+const N_LINES=10, PAIRINGS_PER_LINE=5;
 
 const W_KEYS=['tafb','hotelNights','reportTime','aircraft','creditPay'];
 const W_LABELS={tafb:'TAFB (time away)',hotelNights:'Hotel nights away',reportTime:'Report / wake-up time',aircraft:'Aircraft type',creditPay:'Credit pay'};
+
+/* ══════════════════════════════════════════
+   PAY RATE TABLE — Delta 2023 Captain pay (Section 3 B.2)
+   Longevity step from age:
+     <30→1  30-34→3  35-39→6  40-44→8  45-49→10  50+→12
+══════════════════════════════════════════ */
+const _PAY_RATES = {
+  B767: {1: 280, 3: 295, 6: 331, 8: 336, 10: 342, 12: 349},
+  B737: {1: 260, 3: 275, 6: 320, 8: 325, 10: 330, 12: 335},
+};
+function lookupPayRate(age, aircraftType){
+  const step = age < 30 ? 1 : age < 35 ? 3 : age < 40 ? 6 : age < 45 ? 8 : age < 50 ? 10 : 12;
+  const table = _PAY_RATES[aircraftType] || _PAY_RATES['B737'];
+  return table[step];
+}
 
 /* ══════════════════════════════════════════
    BUILD PILOTS
@@ -663,14 +892,18 @@ function buildPilots(randomise){
     };
     w.creditPay = 100 - w.tafb - w.hotelNights - w.reportTime - w.aircraft;
 
+    const preferredType = wideQual && rand(0,1) ? 'B767' : 'B737';
+    const minRest = rand(10,14);
+    const basePay = lookupPayRate(age, preferredType);
+
     return {
       id:i, name, age, family, hasKids,
       seniority: i+1,
       homeBase: 'BOS',
       qualifiedTypes: wideQual ? ['B737','B767'] : ['B737'],
-      preferredType:  wideQual && rand(0,1) ? 'B767' : 'B737',
-      minRest: rand(10,14),
-      basePay: rand(180,260),
+      preferredType,
+      minRest,
+      basePay,
       weights: {...w},
       llmResult:null, evalScore:null, _metrics:null,
     };
@@ -759,13 +992,12 @@ function buildPairings(useCurrentSeed){
     // Report time: 1h before first departure
     const reportTimeMins = legs[0].depMins - 60; // may be negative (pre-5am)
 
-    // Credit hours: max(actual block, guaranteed minimum)
-    // Guarantee = 0.5h per leg or 4h total, whichever is more
-    const guaranteeHours = Math.max(4.0, numLegs * 0.5);
-    const creditHours    = +(Math.max(blockHours, guaranteeHours)).toFixed(1);
+    // Credit hours: max(block, 1-for-3.5 rotation rig) per Section 12 K
+    const rotationCredit = tafb / 3.5;
+    const creditHours    = +(Math.max(blockHours, rotationCredit)).toFixed(1);
 
-    // Per diem on TAFB (same for all pilots)
-    const perDiem = Math.round(tafb * 2.5);
+    // Per diem on TAFB — $2.85/h per Delta 2023 Section 5
+    const perDiem = Math.round(tafb * 2.85);
     // Pay is pilot-specific: creditHours × pilot.basePay
     // Computed per-pilot in oracle scoring and prompts — not stored on pairing
 
@@ -1442,7 +1674,7 @@ function generateSensitivityPrompts(){
   switch(factor){
     case 'tafb':
       modPair.tafb = Math.round(origPair.tafb * 2);
-      modPair.perDiem = Math.round(modPair.tafb * 2.5); // per diem goes up too
+      modPair.perDiem = Math.round(modPair.tafb * 2.85); // per diem goes up too ($2.85/h)
       changeDesc = `TAFB doubled: ${origPair.tafb}h → ${modPair.tafb}h (per diem also rises: $${origPair.perDiem} → $${modPair.perDiem})`;
       expectedShift = 'rank should DROP for pilots who value home time; may partially offset by higher per diem';
       break;
@@ -1621,12 +1853,164 @@ function scoreSensitivity(){
   document.getElementById('sensResult').innerHTML += resultHtml;
 }
 
+/* ══════════════════════════════════════════
+   BRADLEY-TERRY MODEL  (mirrors evaluator.py BradleyTerryModel)
+   Fits P(i beats j) = s_i / (s_i + s_j) via iterative log-likelihood
+   maximisation (MM algorithm — guaranteed convergence, no scipy needed).
+══════════════════════════════════════════ */
+class BradleyTerry {
+  constructor(itemIds) {
+    this._ids  = itemIds.slice();
+    this._idx  = {};
+    this._ids.forEach((id, i) => { this._idx[id] = i; });
+    this._comps = [];   // [{w: winnerIdx, l: loserIdx}]
+    this._s    = null;  // fitted strengths (same length as _ids)
+  }
+
+  addComparison(winnerId, loserId) {
+    const w = this._idx[winnerId], l = this._idx[loserId];
+    if (w === undefined || l === undefined) return;
+    this._comps.push({ w, l });
+    this._s = null;
+  }
+
+  fit(maxIter = 500, tol = 1e-9) {
+    const n = this._ids.length;
+    if (n < 2 || !this._comps.length) {
+      this._s = new Array(n).fill(1);
+      return;
+    }
+    // MM (minorization-maximization) algorithm for BT MLE
+    let s = new Array(n).fill(1.0);
+    const wins = new Array(n).fill(0);
+    this._comps.forEach(({ w }) => wins[w]++);
+    // Floor: items with zero wins get a small positive strength so they still
+    // participate in the denominator sum and the ranking covers all items.
+    const BT_FLOOR = 0.01;
+    for (let iter = 0; iter < maxIter; iter++) {
+      const sNew = new Array(n).fill(0);
+      for (let i = 0; i < n; i++) {
+        if (!wins[i]) { sNew[i] = BT_FLOOR; continue; }  // zero-win floor
+        let denom = 0;
+        this._comps.forEach(({ w, l }) => {
+          if (w === i || l === i) denom += 1 / (s[w] + s[l]);
+        });
+        sNew[i] = denom > 0 ? wins[i] / denom : BT_FLOOR;
+      }
+      // Normalise so max=1
+      const mx = Math.max(...sNew.filter(x => x > 0));
+      if (mx > 0) for (let i = 0; i < n; i++) sNew[i] /= mx;
+      // Check convergence
+      let delta = 0;
+      for (let i = 0; i < n; i++) delta = Math.max(delta, Math.abs(sNew[i] - s[i]));
+      s = sNew;
+      if (delta < tol) break;
+    }
+    this._s = s;
+  }
+
+  _ensure() { if (!this._s) this.fit(); }
+
+  /** Returns [{id, strength, rank}] sorted best first. */
+  ranking() {
+    this._ensure();
+    return this._ids
+      .map((id, i) => ({ id, strength: this._s[i] }))
+      .sort((a, b) => b.strength - a.strength)
+      .map((r, rank) => ({ ...r, rank: rank + 1 }));
+  }
+
+  /** Returns {itemId → rank (1=best)} */
+  rankPositions() {
+    const out = {};
+    this.ranking().forEach(r => { out[r.id] = r.rank; });
+    return out;
+  }
+
+  /** Fraction of observed comparisons correctly predicted by fitted model. */
+  fitQuality() {
+    this._ensure();
+    if (!this._comps.length) return 1;
+    let correct = 0;
+    this._comps.forEach(({ w, l }) => { if (this._s[w] >= this._s[l]) correct++; });
+    return correct / this._comps.length;
+  }
+}
+
+/* ══════════════════════════════════════════
+   ADAPTIVE PAIR DESIGN  (mirrors evaluator.py design_adaptive_comparisons)
+
+   Round 1: shuffle eligible items (seeded), pair adjacent → ceil(N/2) comparisons.
+   Round 2: fit provisional BT on Round-1 results, add pairs that are
+            rank-adjacent (|rankA - rankB| <= threshold) and not yet seen.
+
+   Total calls: ~ceil(N/2) + a few targeted ones, vs N*(N-1)/2 full round-robin.
+══════════════════════════════════════════ */
+
+/** Deterministic Fisher-Yates shuffle using mulberry32 PRNG seeded with `seed`. */
+function seededShuffle(arr, seed) {
+  let s = seed >>> 0;
+  function rand() {
+    s += 0x6D2B79F5;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = out[i]; out[i] = out[j]; out[j] = tmp;
+  }
+  return out;
+}
+
+function designAdaptivePairs(itemIds, provisionalBtRanking, threshold, seed) {
+  threshold = threshold || 2;
+
+  // Seeded shuffle — reproducible within a session, different across sessions
+  const ids = seededShuffle(itemIds, seed !== undefined ? seed : Date.now());
+
+  // Round 1: adjacent pairs → ceil(N/2) comparisons
+  // For odd N, the last unpaired item is wrapped with the first item.
+  const round1 = [];
+  for (let i = 0; i < ids.length - 1; i += 2) {
+    round1.push({ idA: ids[i], idB: ids[i + 1] });
+  }
+  if (ids.length % 2 === 1) {
+    // Wrap: pair the last element with the first to hit ceil(N/2)
+    round1.push({ idA: ids[ids.length - 1], idB: ids[0] });
+  }
+
+  if (!provisionalBtRanking || !provisionalBtRanking.length) return round1;
+
+  // Round 2: uncertain pairs not already in round 1
+  const seen = new Set(round1.map(p => [Math.min(p.idA, p.idB), Math.max(p.idA, p.idB)].join('-')));
+  const rankPos = {};
+  provisionalBtRanking.forEach((r, i) => { rankPos[r.id] = i; });
+
+  const round2 = [];
+  for (let i = 0; i < provisionalBtRanking.length; i++) {
+    for (let j = i + 1; j < provisionalBtRanking.length; j++) {
+      const a = provisionalBtRanking[i].id, b = provisionalBtRanking[j].id;
+      if (Math.abs(rankPos[a] - rankPos[b]) <= threshold) {
+        const key = [Math.min(a, b), Math.max(a, b)].join('-');
+        if (!seen.has(key)) { seen.add(key); round2.push({ idA: a, idB: b }); }
+      }
+    }
+  }
+
+  return round1.concat(round2);
+}
+
 /* ── MODE B: Pairwise ── */
 /* ── Pairwise round-robin state ── */
-let rrPilotId   = null;
-let rrPairs     = [];   // [{idA, idB}, ...]  — all C(n,2) combos for qualified pairings
-let rrStep      = 0;    // which comparison we're on
-let rrResults   = [];   // submitted results for this round
+let rrPilotId    = null;
+let rrPairs      = [];   // [{idA, idB}, ...]  — adaptive pairs for current run
+let rrStep       = 0;    // which comparison we're on
+let rrResults    = [];   // submitted results for the current run
+let rrRunIdx     = 1;    // which run we are on (1, 2, or 3)
+let rrAllRunData = [];   // [{comparisons:[...], btRanking:[...], pairs:[...]}] per completed run
 
 function populatePwSelects(){
   const pp = document.getElementById('pwPilot');
@@ -1636,29 +2020,26 @@ function populatePwSelects(){
 }
 
 function startRoundRobin(){
-  rrPilotId = +document.getElementById('pwPilot').value;
-  const pilot = pilots[rrPilotId];
-  rrPairs = [];
+  rrPilotId    = +document.getElementById('pwPilot').value;
+  const pilot  = pilots[rrPilotId];
+  rrRunIdx     = 1;
+  rrAllRunData = [];
+  rrPairs      = [];
+  const _seed  = Date.now();
   if(lineMode){
-    // In line mode: pair up all qualified lines
     const qualifiedLines = lines.filter(ln=>lineQualified(pilot, ln));
     if(qualifiedLines.length < 2){
       alert('This pilot is only qualified for '+qualifiedLines.length+' line(s) — need at least 2 for pairwise comparison.');
       return;
     }
-    for(let i=0;i<qualifiedLines.length;i++)
-      for(let j=i+1;j<qualifiedLines.length;j++)
-        rrPairs.push({idA:qualifiedLines[i].id, idB:qualifiedLines[j].id});
+    rrPairs = designAdaptivePairs(qualifiedLines.map(l=>l.id), null, 2, _seed);
   } else {
-    // In pairing mode: pair up all qualified pairings
     const qualifiedPairings = pairings.filter(p=>pilot.qualifiedTypes.includes(p.aircraft));
     if(qualifiedPairings.length < 2){
       alert('This pilot is only qualified for '+qualifiedPairings.length+' pairing(s) — need at least 2 for pairwise comparison.');
       return;
     }
-    for(let i=0;i<qualifiedPairings.length;i++)
-      for(let j=i+1;j<qualifiedPairings.length;j++)
-        rrPairs.push({idA:qualifiedPairings[i].id, idB:qualifiedPairings[j].id});
+    rrPairs = designAdaptivePairs(qualifiedPairings.map(p=>p.id), null, 2, _seed);
   }
   rrStep    = 0;
   rrResults = [];
@@ -1815,8 +2196,78 @@ function submitRRResponse(){
   if(rrStep < rrPairs.length){
     showRRStep();
   } else {
-    // All done — show derived ranking
     document.getElementById('rrCard').style.display = 'none';
+    _finishRRRun();
+  }
+}
+
+function _finishRRRun(){
+  const pilot      = pilots[rrPilotId];
+  const shortLabel = lineMode ? 'L' : 'P';
+  const eligible   = lineMode
+    ? lines.filter(ln => lineQualified(pilot, ln))
+    : pairings.filter(p => pilot.qualifiedTypes.includes(p.aircraft));
+  const itemIds = eligible.map(it => it.id);
+
+  // Fit BT on this run's comparisons
+  const bt = new BradleyTerry(itemIds);
+  rrResults.forEach(r => bt.addComparison(r.llmWinner, r.llmWinner === r.idA ? r.idB : r.idA));
+  bt.fit();
+  const btRanking = bt.ranking(); // [{id, rank, strength}]
+
+  rrAllRunData.push({ comparisons: [...rrResults], btRanking: btRanking, pairs: [...rrPairs] });
+
+  if(rrRunIdx === 1){
+    // Show "Run 1 complete" banner and auto-start Run 2
+    let banner = '<div class="card" style="border-color:#d97706;margin-bottom:1rem">';
+    banner += '<div class="card-title" style="color:#92400e">Run 1 complete — Capt. '+pilot.name+'</div>';
+    banner += '<div style="font-size:11px;font-family:monospace;color:#78350f;margin-bottom:8px">';
+    banner += 'Run 2 is starting below with a new, independent set of comparisons.<br>';
+    banner += '<b>Do not refer to your previous answers</b> — treat each comparison fresh.</div>';
+    banner += '<div style="font-size:10px;font-family:monospace;color:#6b7280">Run 1 BT ranking: ';
+    banner += btRanking.map(function(r,i){ return (i+1)+'. '+shortLabel+r.id; }).join(' › ');
+    banner += '</div></div>';
+    document.getElementById('pwLog').innerHTML = banner;
+
+    rrRunIdx  = 2;
+    rrResults = [];
+    rrStep    = 0;
+    rrPairs   = designAdaptivePairs(itemIds, null, 2, Date.now() + 999983);
+    document.getElementById('rrCard').style.display = 'block';
+    showRRStep();
+
+  } else if(rrRunIdx === 2){
+    const r1  = rrAllRunData[0].btRanking;
+    const r2  = rrAllRunData[1].btRanking;
+    const rho = +(_spearmanBetween(r1, r2, 'id').toFixed(3));
+    const status = rho > 0.8 ? 'stable' : rho >= 0.6 ? 'marginal' : 'unstable';
+
+    if(status !== 'unstable'){
+      renderRoundRobinResult();
+    } else {
+      const prevBanner = document.getElementById('pwLog').innerHTML;
+      let warn = '<div class="card" style="border-color:#dc2626;margin-bottom:1rem">';
+      warn += '<div class="card-title" style="color:#991b1b">Inconsistent across runs — starting Run 3</div>';
+      warn += '<div style="font-size:11px;font-family:monospace;color:#7f1d1d">';
+      warn += 'ρ = '+rho.toFixed(2)+' between Run 1 and Run 2 (threshold: 0.60). ';
+      warn += 'The two runs produced noticeably different rankings.<br>';
+      warn += 'Run 3 will help identify the most reliable result.</div>';
+      warn += '<div style="font-size:10px;font-family:monospace;color:#6b7280;margin-top:6px">';
+      warn += 'Run 1: '+rrAllRunData[0].btRanking.map(function(r,i){ return (i+1)+'.'+shortLabel+r.id; }).join(' › ')+'<br>';
+      warn += 'Run 2: '+rrAllRunData[1].btRanking.map(function(r,i){ return (i+1)+'.'+shortLabel+r.id; }).join(' › ');
+      warn += '</div></div>';
+      document.getElementById('pwLog').innerHTML = prevBanner + warn;
+
+      rrRunIdx  = 3;
+      rrResults = [];
+      rrStep    = 0;
+      rrPairs   = designAdaptivePairs(itemIds, null, 2, Date.now() + 1999979);
+      document.getElementById('rrCard').style.display = 'block';
+      showRRStep();
+    }
+
+  } else {
+    // Run 3 complete
     renderRoundRobinResult();
   }
 }
@@ -1825,51 +2276,98 @@ function renderRoundRobinResult(){
   const pilot = pilots[rrPilotId];
 
   // Build the item list (lines or pairings) and oracle score map
-  const items       = lineMode ? lines : pairings;
-  const itemLabel   = lineMode ? 'Line ' : 'Pairing ';
-  const shortLabel  = lineMode ? 'L' : 'P';
-  const llmWins     = {};
-  items.forEach(it=>llmWins[it.id]=0);
-  rrResults.forEach(r=>llmWins[r.llmWinner]++);
+  const items      = lineMode ? lines : pairings;
+  const itemLabel  = lineMode ? 'Line ' : 'Pairing ';
+  const shortLabel = lineMode ? 'L' : 'P';
+  const idKey      = lineMode ? 'lineId' : 'pairingId';
+
+  // Combine comparisons from all runs for the final BT model
+  const allComps   = rrAllRunData.length ? rrAllRunData.reduce(function(a,d){ return a.concat(d.comparisons); }, []) : [...rrResults];
+  const eligible   = lineMode
+    ? lines.filter(function(ln){ return lineQualified(pilot, ln); })
+    : pairings.filter(function(p){ return pilot.qualifiedTypes.includes(p.aircraft); });
+  const eligibleIds = eligible.map(function(it){ return it.id; });
+
+  const _bt = new BradleyTerry(eligibleIds);
+  allComps.forEach(function(r){
+    if(r.llmWinner !== undefined && r.idA !== undefined && r.idB !== undefined)
+      _bt.addComparison(r.llmWinner, r.llmWinner === r.idA ? r.idB : r.idA);
+  });
+  _bt.fit();
+  const _btRanking = _bt.ranking();   // [{id, strength, rank}]
+  const _btFq      = _bt.fitQuality();
+
+  // Cross-run Spearman ρ consistency
+  const r1_r2_rho = rrAllRunData.length >= 2
+    ? +(_spearmanBetween(rrAllRunData[0].btRanking, rrAllRunData[1].btRanking, 'id').toFixed(3)) : null;
+  const r1_r3_rho = rrAllRunData.length >= 3
+    ? +(_spearmanBetween(rrAllRunData[0].btRanking, rrAllRunData[2].btRanking, 'id').toFixed(3)) : null;
+  const r2_r3_rho = rrAllRunData.length >= 3
+    ? +(_spearmanBetween(rrAllRunData[1].btRanking, rrAllRunData[2].btRanking, 'id').toFixed(3)) : null;
+  const minRho = r1_r3_rho !== null ? Math.min(r1_r2_rho, r1_r3_rho, r2_r3_rho) : r1_r2_rho;
+  const consistencyStatus = minRho === null ? null
+    : minRho > 0.8 ? 'stable' : minRho >= 0.6 ? 'marginal' : 'unstable';
+
+  const llmWins = {};
+  eligible.forEach(function(it){ llmWins[it.id] = 0; });
+  allComps.forEach(function(r){ if(llmWins[r.llmWinner] !== undefined) llmWins[r.llmWinner]++; });
 
   // Oracle scores and ranking
   const oracleScoresRR = {};
   if(lineMode){
-    oracleRankLines(pilot, lines).forEach(r=>{ oracleScoresRR[r.line.id]=r.score; });
+    oracleRankLines(pilot, lines).forEach(function(r){ oracleScoresRR[r.line.id] = r.score; });
   } else {
-    oracleRankPilot(pilot).forEach(r=>{ oracleScoresRR[r.id]=r.oScore; });
+    oracleRankPilot(pilot).forEach(function(r){ oracleScoresRR[r.id] = r.oScore; });
   }
-  const llmRanked = [...items].sort((a,b)=>llmWins[b.id]-llmWins[a.id]);
-  const oraRanked = [...items].sort((a,b)=>(oracleScoresRR[b.id]||0)-(oracleScoresRR[a.id]||0));
+  const llmRanked = _btRanking.length
+    ? _btRanking.map(function(r){ return items.find(function(it){ return it.id === r.id; }); }).filter(Boolean)
+    : eligible.slice().sort(function(a,b){ return llmWins[b.id] - llmWins[a.id]; });
+  const oraRanked = eligible.slice().sort(function(a,b){ return (oracleScoresRR[b.id]||0)-(oracleScoresRR[a.id]||0); });
 
-  // Consistency check (only meaningful with 3 items)
-  let consistent = true, cycleDesc = '';
-  if(items.length===3){
-    const wins={};
-    rrResults.forEach(r=>{ wins[r.llmWinner+'_'+[r.idA,r.idB].find(x=>x!==r.llmWinner)]=true; });
-    const [i1,i2,i3]=items.map(x=>x.id);
-    if(wins[i1+'_'+i2]&&wins[i2+'_'+i3]&&wins[i3+'_'+i1]){consistent=false;cycleDesc=shortLabel+i1+'>'+shortLabel+i2+'>'+shortLabel+i3+'>'+shortLabel+i1;}
-    if(wins[i1+'_'+i3]&&wins[i3+'_'+i2]&&wins[i2+'_'+i1]){consistent=false;cycleDesc=shortLabel+i1+'>'+shortLabel+i3+'>'+shortLabel+i2+'>'+shortLabel+i1;}
-  }
-
-  const total   = rrResults.length;
-  const clearRR = rrResults.filter(r=>r.oracleDiff > 0);
-  const correct = clearRR.filter(r=>r.correct).length;
-  const pct     = clearRR.length>0 ? Math.round(correct/clearRR.length*100) : 0;
+  const total   = allComps.length;
+  const clearRR = allComps.filter(function(r){ return r.oracleDiff > 0; });
+  const correct = clearRR.filter(function(r){ return r.correct; }).length;
+  const pct     = clearRR.length > 0 ? Math.round(correct / clearRR.length * 100) : 0;
   const tiedRR  = total - clearRR.length;
 
+  const _btFqPct   = Math.round(_btFq * 100);
+  const _btFqColor = _btFq >= 0.85 ? '#16a34a' : _btFq >= 0.70 ? '#d97706' : '#dc2626';
+  const _btFqNote  = _btFq >= 0.85 ? 'high' : _btFq >= 0.70 ? 'moderate' : 'low';
+
   let html = '<div class="card" style="border-color:#2563eb">';
-  html += '<div class="card-title">Round-robin result — Capt. '+pilot.name+'</div>';
+  html += '<div class="card-title">Round-robin result — Capt. '+pilot.name
+    +' <span style="font-size:11px;font-weight:400;color:#6b7280">('+rrAllRunData.length+' run'+(rrAllRunData.length!==1?'s':'')+' · '+total+' total comparisons)</span></div>';
 
   html += '<div class="pw-summary">';
   html += '<div class="pw-stat"><div class="pw-stat-val" style="color:'+(pct>=70?'#16a34a':pct>=50?'#d97706':'#dc2626')+'">'+pct+'%</div><div class="pw-stat-lbl">oracle agreement'+(tiedRR>0?' (excl. ties)':'')+'</div></div>';
   html += '<div class="pw-stat"><div class="pw-stat-val">'+correct+'/'+clearRR.length+'</div><div class="pw-stat-lbl">clear pairs matched</div></div>';
   if(tiedRR>0) html += '<div class="pw-stat"><div class="pw-stat-val" style="color:#888">'+tiedRR+'</div><div class="pw-stat-lbl">tied (excluded)</div></div>';
-  html += '<div class="pw-stat"><div class="pw-stat-val" style="color:'+(consistent?'#16a34a':'#dc2626')+'">'+(consistent?'✓':'✗')+'</div><div class="pw-stat-lbl">consistent</div></div>';
+  html += '<div class="pw-stat"><div class="pw-stat-val" style="color:'+_btFqColor+'">'+_btFqPct+'%</div><div class="pw-stat-lbl">BT fit quality ('+_btFqNote+')</div></div>';
+  html += '<div class="pw-stat"><div class="pw-stat-val" style="font-size:11px;color:#555">'+total+' pairs</div><div class="pw-stat-lbl">total comparisons</div></div>';
+  if(consistencyStatus){
+    const pillC = consistencyStatus==='stable'?'#16a34a':consistencyStatus==='marginal'?'#d97706':'#dc2626';
+    html += '<div class="pw-stat"><div class="pw-stat-val" style="color:'+pillC+';font-size:14px">'
+      +(consistencyStatus==='stable'?'STABLE':consistencyStatus==='marginal'?'MARGINAL':'UNSTABLE')+'</div>'
+      +'<div class="pw-stat-lbl">&rho;='+r1_r2_rho+' run consistency</div></div>';
+  }
   html += '</div>';
 
-  if(!consistent){
-    html += '<div style="font-size:11px;color:#dc2626;font-family:monospace;margin-bottom:10px">⚠ Cycle detected: '+cycleDesc+'. Preferences are not fully transitive.</div>';
+  html += '<details style="margin-bottom:10px">';
+  html += '<summary style="font-size:10px;color:#6b7280;font-family:monospace;cursor:pointer;user-select:none;padding:2px 0">&#9432; What do these metrics mean?</summary>';
+  html += '<div style="font-size:10px;color:#374151;font-family:monospace;margin-top:6px;line-height:1.8;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px">';
+  html += '<div><b>oracle agreement</b> &mdash; How often did the LLM pick the same winner as the oracle in a head-to-head matchup? 100% = always agreed. Pairs where the oracle had no clear preference are excluded. <span style="color:#9ca3af">How it\'s computed: count the matchups where LLM and oracle agreed, divide by the number of matchups where the oracle had a clear preference.</span></div>';
+  html += '<div><b>clear pairs matched</b> &mdash; The raw count behind oracle agreement: X out of Y matchups where the oracle had a clear preference and the LLM agreed. <span style="color:#9ca3af">A matchup counts as &ldquo;clear&rdquo; when the oracle\'s scores for the two options are far enough apart to declare a winner.</span></div>';
+  html += '<div><b>tied (excluded)</b> &mdash; Matchups where the oracle scores were too close to declare a winner. These are skipped so they don\'t penalize the LLM unfairly. <span style="color:#9ca3af">Specifically: pairs where the oracle score difference is zero or negligible.</span></div>';
+  html += '<div><b>BT fit quality</b> &mdash; If you rank all options by the LLM\'s overall preferences, does that ranking correctly predict who the LLM chose in each individual matchup? Higher % = choices are more internally consistent. <span style="color:#9ca3af">How it\'s computed: a Bradley-Terry model is fitted to all the LLM\'s choices to derive a single strength score per option. Fit quality = % of individual matchups that those strength scores predict correctly. &ge;85% = high, &ge;70% = moderate.</span></div>';
+  html += '<div><b>adaptive (&laquo;C(n,2))</b> &mdash; The tool only asked about a small, carefully chosen set of matchups &mdash; not every possible pair. C(n,2) is the total number of possible pairs for n options; &laquo; means far fewer were needed. <span style="color:#9ca3af">How it\'s computed: Round 1 compares neighbors in the initial ranking. Round 2 fills in gaps between adjacent ranks. This gives enough information to build a full ranking without exhausting all pairs.</span></div>';
+  html += '<div><b>consistent</b> &mdash; Are the LLM\'s choices free of contradictions? If it said A &gt; B and B &gt; C, saying C &gt; A would be a contradiction. &#10003; means none found. <span style="color:#9ca3af">How it\'s computed: every group of 3 options is checked for a cycle (A beats B, B beats C, C beats A). If any cycle exists, the result is marked inconsistent.</span></div>';
+  html += '</div>';
+  html += '</details>';
+
+  if(consistencyStatus === 'unstable'){
+    html += '<div style="font-size:11px;color:#dc2626;font-family:monospace;margin-bottom:10px">⚠ High inconsistency detected (&rho;='+minRho.toFixed(2)+'). Pairwise may not be reliable for this pilot — consider using scoring instead.</div>';
+  } else if(consistencyStatus === 'marginal'){
+    html += '<div style="font-size:11px;color:#d97706;font-family:monospace;margin-bottom:10px">⚠ Rankings differ somewhat across runs (&rho;='+r1_r2_rho+'). Treat pairwise results with caution for this pilot.</div>';
   }
 
   html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">';
@@ -1902,43 +2400,79 @@ function renderRoundRobinResult(){
   html += '</div>';
   html += '</div>'; // grid
 
-  // Individual comparisons
-  html += '<div style="margin-top:1rem"><div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:8px">Individual comparisons</div>';
-  rrResults.forEach(r=>{
-    const tied  = r.oracleDiff === 0;
-    const cls   = tied ? '' : r.correct ? 'pw-correct' : 'pw-wrong';
-    const label = tied
-      ? '<span style="color:#888">~ oracle tie — both valid</span>'
-      : r.correct
-        ? '<span style="color:#16a34a">✓ oracle match</span>'
-        : '<span style="color:#dc2626">✗ oracle mismatch</span>';
-    html += '<div class="pw-result '+cls+'">';
-    html += '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:11px;margin-bottom:4px">';
-    html += '<span>'+shortLabel+r.idA+' vs '+shortLabel+r.idB+'</span>';
-    html += label+' <span style="color:#888;margin-left:6px">· '+r.confidence+'</span></div>';
-    html += '<div style="font-size:11px;color:#555;font-family:monospace">LLM → '+shortLabel+r.llmWinner+' · Oracle → '+shortLabel+r.oracleWinner+' (gap '+r.oracleDiff+'pts)<br>'+r.reason+'</div>';
-    html += '</div>';
+  // Individual comparisons — grouped by run
+  html += '<div style="margin-top:1rem">';
+  const runsForDisplay = rrAllRunData.length ? rrAllRunData : [{comparisons: allComps, btRanking: _btRanking}];
+  runsForDisplay.forEach(function(runData, ri){
+    const runComps = runData.comparisons;
+    html += '<div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:6px;margin-top:'+(ri>0?'12px':'0')+'">Run '+(ri+1)+' comparisons ('+runComps.length+')</div>';
+    runComps.forEach(function(r){
+      const tied  = r.oracleDiff === 0;
+      const cls   = tied ? '' : r.correct ? 'pw-correct' : 'pw-wrong';
+      const label = tied
+        ? '<span style="color:#888">~ oracle tie — both valid</span>'
+        : r.correct
+          ? '<span style="color:#16a34a">&#10003; oracle match</span>'
+          : '<span style="color:#dc2626">&#10007; oracle mismatch</span>';
+      html += '<div class="pw-result '+cls+'">';
+      html += '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:11px;margin-bottom:4px">';
+      html += '<span>'+shortLabel+r.idA+' vs '+shortLabel+r.idB+'</span>';
+      html += label+' <span style="color:#888;margin-left:6px">&#183; '+r.confidence+'</span></div>';
+      html += '<div style="font-size:11px;color:#555;font-family:monospace">LLM &#8594; '+shortLabel+r.llmWinner+' &#183; Oracle &#8594; '+shortLabel+r.oracleWinner+' (gap '+r.oracleDiff+'pts)<br>'+r.reason+'</div>';
+      html += '</div>';
+    });
   });
   html += '</div>';
   html += '</div>'; // card
 
   html += '<div class="btn-row" style="margin-top:1rem">';
-  html += '<button class="btn primary" onclick="saveRun()">Save to log →</button>';
-  html += '<button class="btn" onclick="startRoundRobin()">↺ Retry same pilot</button>';
-  html += '<button class="btn" onclick="resetRoundRobin()">↺ New pilot</button>';
+  html += '<button class="btn primary" onclick="saveRun()">Save to log &#8594;</button>';
+  html += '<button class="btn" onclick="startRoundRobin()">&#8634; Retry same pilot</button>';
+  html += '<button class="btn" onclick="resetRoundRobin()">&#8634; New pilot</button>';
   html += '</div>';
 
+  // Build the final ranked list for resultsStore
+  const _finalRanked = _btRanking.map(function(r){
+    var res = {}; res[idKey] = r.id; res.rank = r.rank; res.btStrength = +r.strength.toFixed(4); return res;
+  });
+
+  _pwByPilot[rrPilotId] = {
+    rrResults: allComps, rrPairs: rrPairs, done: true,
+    consistency: {
+      r1_vs_r2_spearman: r1_r2_rho, r1_vs_r3_spearman: r1_r3_rho, r2_vs_r3_spearman: r2_r3_rho,
+      status: consistencyStatus, runs_used: rrAllRunData.length,
+      final_ranking: _btRanking.map(function(r){ return {id:r.id, rank:r.rank, btStrength:+r.strength.toFixed(4)}; }),
+      fit_quality: _btFq, n_total_comparisons: total
+    },
+    btFitQuality: _btFq
+  };
+
+  resultsStore.pairwise[rrPilotId] = {
+    runs: rrAllRunData.map(function(d, i){
+      return { run: i+1, comparisons: d.comparisons, bt_ranking: d.btRanking };
+    }),
+    consistency: {
+      r1_vs_r2_spearman: r1_r2_rho, r1_vs_r3_spearman: r1_r3_rho, r2_vs_r3_spearman: r2_r3_rho,
+      status: consistencyStatus, runs_used: rrAllRunData.length,
+      final_ranking: _btRanking.map(function(r){ return {id:r.id, rank:r.rank, btStrength:+r.strength.toFixed(4)}; }),
+      fit_quality: _btFq, n_total_comparisons: total
+    },
+    finalResult: _finalRanked,
+    btFitQuality: _btFq
+  };
+
   document.getElementById('pwLog').innerHTML = html;
-  _pwByPilot[rrPilotId] = {rrResults: [...rrResults], rrPairs: [...rrPairs], done: true};
   renderPwRoster(rrPilotId);
   renderEvalSummary();
 }
 
 function resetRoundRobin(){
-  rrPilotId = null;
-  rrPairs   = [];
-  rrStep    = 0;
-  rrResults = [];
+  rrPilotId    = null;
+  rrPairs      = [];
+  rrStep       = 0;
+  rrResults    = [];
+  rrRunIdx     = 1;
+  rrAllRunData = [];
   document.getElementById('rrStepper').style.display = 'none';
   document.getElementById('rrCard').style.display    = 'block';
   document.getElementById('pwLog').innerHTML         = '';
@@ -2909,6 +3443,7 @@ function _resetEvalState(){
   _lastLineAlloc={};
   _lastAlloc={};
   _lastAllocLlmSourceByPilot=null;
+  _resetResultsStore();
   var rr=document.getElementById('rrStepper'); if(rr) rr.style.display='none';
   var rc=document.getElementById('rrCard');
   if(rc) rc.style.display='block';
@@ -3057,8 +3592,8 @@ function _buildAllPairingsForLines(seed, n, maxB767){
     var tafb=Math.round((lastAbs-firstAbs)/60*10)/10;
     var totalBlkMins=legs.reduce(function(s,lg){ return s+lg.blockMins; },0);
     var blockHrs=Math.round(totalBlkMins/60*10)/10;
-    var creditHrs=Math.round(Math.max(blockHrs,Math.max(4.0,numLegs*0.5))*10)/10;
-    var perDiem=Math.round(tafb*2.5);
+    var creditHrs=Math.round(Math.max(blockHrs, tafb/3.5)*10)/10; // 1-for-3.5 rig per Section 12 K
+    var perDiem=Math.round(tafb*2.85); // $2.85/h per Delta 2023 Section 5
     var reportTimeMins=legs[0].depMins-60;
     var cities=route.slice(1,route.length-1).map(function(c){ return CITY_NAMES[c]||c; });
     result.push({
@@ -3417,6 +3952,352 @@ async function callBackendPairwise(){
    FULL AUTO-RUN (backend LLM for all pilots / all pairwise)
 ══════════════════════════════════════════ */
 let _autoRunStopped = false;
+
+// ---------------------------------------------------------------------------
+// Double-run consistency protocol — store & utilities
+// ---------------------------------------------------------------------------
+let resultsStore = {
+  rankall:  {},  // pilotId → {runs:[], consistency:null, finalResult:null, ranThree:false}
+  scoring:  {},  // pilotId → {runs:[], consistency:null, finalResult:null, ranThree:false}
+  pairwise: {},  // pilotId → {runs:[], consistency:null, finalResult:null, ranThree:false}
+};
+
+// mode → {startedAt: ISO string, durationMs: number|null, stopped: bool}
+let _runTimings = { rankall: null, scoring: null, pairwise: null };
+let comparisonStore = { snapshots: [], computed: null };
+
+function _resetResultsStore(){
+  resultsStore = { rankall:{}, scoring:{}, pairwise:{} };
+  _runTimings   = { rankall: null, scoring: null, pairwise: null };
+  comparisonStore.computed = null;
+}
+
+function _spearmanBetween(list1, list2, idKey){
+  var map2 = {};
+  list2.forEach(function(r){ map2[r[idKey]] = r.rank; });
+  var pairs = [];
+  list1.forEach(function(r){ var b=map2[r[idKey]]; if(b!==undefined) pairs.push({a:r.rank,b:b}); });
+  var n=pairs.length; if(n<2) return 0;
+  var am=pairs.reduce(function(s,p){return s+p.a;},0)/n;
+  var bm=pairs.reduce(function(s,p){return s+p.b;},0)/n;
+  var num=pairs.reduce(function(s,p){return s+(p.a-am)*(p.b-bm);},0);
+  var da=Math.sqrt(pairs.reduce(function(s,p){return s+Math.pow(p.a-am,2);},0));
+  var db=Math.sqrt(pairs.reduce(function(s,p){return s+Math.pow(p.b-bm,2);},0));
+  return (da&&db)?num/(da*db):0;
+}
+
+/* ── TIED RANKING HELPERS ── */
+var ORACLE_TIE_THRESHOLD = 3;   // ±points for oracle tied-group detection
+var ORACLE_TIE_MAX_GROUP = 3;   // max lines per oracle tied group; overflow splits by line id
+
+function computeTiedRanking(lineIds, scores, method, stdDevs) {
+  if (!lineIds || !lineIds.length) return [];
+  var groups = [];
+  var currentGroup = [lineIds[0]];
+
+  function flushGroup(g) {
+    // Sort within group by line id (stable tiebreaker) then push.
+    // If oracle and group exceeds max size, split into sub-groups of max size.
+    g.sort(function(a, b) { return a - b; });
+    if (method === 'oracle') {
+      while (g.length > ORACLE_TIE_MAX_GROUP) {
+        groups.push(g.splice(0, ORACLE_TIE_MAX_GROUP));
+      }
+    }
+    if (g.length) groups.push(g);
+  }
+
+  for (var i = 1; i < lineIds.length; i++) {
+    var id = lineIds[i];
+    // Compare against group leader (first/highest-scored item), not the last item.
+    // Comparing against the last item causes chain-drift: A≈B and B≈C would merge
+    // A,B,C into one group even when |score(A)-score(C)| > threshold.
+    var leaderId = currentGroup[0];
+    var tied = false;
+    if (method === 'oracle') {
+      tied = Math.abs((scores[leaderId] || 0) - (scores[id] || 0)) <= ORACLE_TIE_THRESHOLD;
+    } else if (method === 'scoring' && stdDevs) {
+      var meanA = scores[leaderId] || 0, stdA = stdDevs[leaderId] || 0;
+      var meanB = scores[id] || 0, stdB = stdDevs[id] || 0;
+      tied = (meanA - stdA <= meanB + stdB) && (meanB - stdB <= meanA + stdA);
+    }
+    if (tied) {
+      currentGroup.push(id);
+    } else {
+      flushGroup(currentGroup);
+      currentGroup = [id];
+    }
+  }
+  flushGroup(currentGroup);
+  return groups;
+}
+
+function spearmanWithTies(groupsA, groupsB) {
+  function toRankMap(groups) {
+    var ranks = {};
+    var pos = 1;
+    for (var i = 0; i < groups.length; i++) {
+      var g = groups[i];
+      var avg = pos + (g.length - 1) / 2;
+      for (var j = 0; j < g.length; j++) ranks[g[j]] = avg;
+      pos += g.length;
+    }
+    return ranks;
+  }
+  var rA = toRankMap(groupsA);
+  var rB = toRankMap(groupsB);
+  var commonIds = Object.keys(rA).filter(function(id) { return rB[id] !== undefined; });
+  var n = commonIds.length;
+  if (n < 2) return 0;
+  var pairs = commonIds.map(function(id) { return { a: rA[id], b: rB[id] }; });
+  var am = 0, bm = 0;
+  pairs.forEach(function(p) { am += p.a; bm += p.b; });
+  am /= n; bm /= n;
+  var num = 0, da = 0, db = 0;
+  pairs.forEach(function(p) {
+    num += (p.a - am) * (p.b - bm);
+    da += (p.a - am) * (p.a - am);
+    db += (p.b - bm) * (p.b - bm);
+  });
+  da = Math.sqrt(da); db = Math.sqrt(db);
+  return (da && db) ? num / (da * db) : 0;
+}
+
+function _countTiedPairs(groups) {
+  var count = 0;
+  groups.forEach(function(g) { count += g.length * (g.length - 1) / 2; });
+  return count;
+}
+
+function _scoringStdDevs(pilotId, idKey) {
+  var scS = resultsStore.scoring[pilotId];
+  if (!scS || !scS.runs || scS.runs.length < 2) return {};
+  var scoresByItem = {};
+  scS.runs.forEach(function(run) {
+    run.result.forEach(function(r) {
+      var id = r[idKey];
+      if (!scoresByItem[id]) scoresByItem[id] = [];
+      scoresByItem[id].push(r.score);
+    });
+  });
+  var stds = {};
+  Object.keys(scoresByItem).forEach(function(id) {
+    var sc = scoresByItem[id];
+    if (sc.length < 2) { stds[id] = 0; return; }
+    var mean = sc.reduce(function(s, v) { return s + v; }, 0) / sc.length;
+    var variance = sc.reduce(function(s, v) { return s + (v - mean) * (v - mean); }, 0) / sc.length;
+    stds[id] = Math.sqrt(variance);
+  });
+  return stds;
+}
+
+function _getOracleTiedGroups(pilot, idKey) {
+  var oScores = {};
+  var sortedIds;
+  if (lineMode && lines.length) {
+    // Use oracleRankLines ordering directly: qualified-first, then score descending,
+    // then lineId ascending. This matches the canonical oracle rank list so that
+    // group positions align with oracle ranks (fixes negative-ρ against rank-all).
+    var ranked = oracleRankLines(pilot, lines);
+    ranked.forEach(function(r) { oScores[r.line.id] = r.score; });
+    sortedIds = ranked.map(function(r) { return r.line.id; });
+  } else {
+    oracleRankPilot(pilot).forEach(function(r) { oScores[r.id] = r.oScore; });
+    sortedIds = Object.keys(oScores).map(Number).sort(function(a, b) {
+      return (oScores[b] || 0) - (oScores[a] || 0);
+    });
+  }
+  return computeTiedRanking(sortedIds, oScores, 'oracle', null);
+}
+
+function _getScoringTiedGroups(pilot, idKey) {
+  var scS = resultsStore.scoring[pilot.id];
+  if (!scS || !scS.finalResult || !scS.finalResult.length) return null;
+  var stdDevs = _scoringStdDevs(pilot.id, idKey);
+  var scores = {};
+  scS.finalResult.forEach(function(r) { scores[r[idKey]] = r.score; });
+  var sortedIds = scS.finalResult.slice().sort(function(a, b) { return b.score - a.score; }).map(function(r) { return r[idKey]; });
+  return computeTiedRanking(sortedIds, scores, 'scoring', stdDevs);
+}
+
+function _tiedGroupsToRankedList(groups, idKey) {
+  var result = [];
+  var pos = 1;
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    var avg = pos + (g.length - 1) / 2;
+    for (var j = 0; j < g.length; j++) {
+      var item = {};
+      item[idKey] = g[j];
+      item.rank = avg;
+      item.tieGroup = i;
+      item.tieSize = g.length;
+      result.push(item);
+    }
+    pos += g.length;
+  }
+  return result;
+}
+
+function _checkRankConsistency(run1, run2){
+  var idKey=run1[0]&&run1[0].pairingId!==undefined?'pairingId':'lineId';
+  var rho=_spearmanBetween(run1,run2,idKey);
+  var stability=rho>0.9?'stable':rho>=0.7?'marginal':'unstable';
+  return {stability:stability, metric:Math.round(rho*100)/100, ranThree:false};
+}
+
+function _checkScoringConsistency(run1, run2){
+  var idKey=run1[0]&&run1[0].pairingId!==undefined?'pairingId':'lineId';
+  var map2={}; run2.forEach(function(r){ map2[r[idKey]]=r.score; });
+  var stds=[];
+  run1.forEach(function(r){ var s2=map2[r[idKey]]; if(s2!==undefined) stds.push(Math.abs(r.score-s2)/Math.sqrt(2)); });
+  var maxStd=stds.length?Math.max.apply(null,stds):0;
+  var stability=maxStd<5?'stable':maxStd<=10?'marginal':'unstable';
+  return {stability:stability, metric:Math.round(maxStd*10)/10, ranThree:false};
+}
+
+// Takes BT ranking arrays [{id, rank, strength}], not raw comparisons
+function _checkPairwiseConsistency(btRanking1, btRanking2){
+  var rho = +(_spearmanBetween(btRanking1, btRanking2, 'id').toFixed(3));
+  var stability = rho > 0.8 ? 'stable' : rho >= 0.6 ? 'marginal' : 'unstable';
+  return {stability:stability, metric:rho, ranThree:false};
+}
+
+/**
+ * Compute within-method run consistency as Spearman ρ between ranked lists.
+ * Works uniformly across rankall, scoring, and pairwise.
+ *
+ * @param {object} storeEntry  resultsStore.rankall/scoring/pairwise[pilotId]
+ * @param {string} method      'rankall' | 'scoring' | 'pairwise'
+ * @returns {object|null}
+ *   { r1_r2: number, r1_r3: number|null, r2_r3: number|null, status: string }
+ *   or null if fewer than 2 runs
+ */
+function _withinMethodRho(storeEntry, method){
+  if(!storeEntry || !storeEntry.runs || storeEntry.runs.length < 2) return null;
+  var _firstResult = storeEntry.runs[0].result || storeEntry.runs[0].comparisons || [];
+  var idKey = _firstResult[0] && _firstResult[0].pairingId !== undefined ? 'pairingId' : 'lineId';
+
+  function _toRankList(run){
+    if(method === 'pairwise'){
+      // New schema: run.bt_ranking is [{id, rank, strength}]
+      if(run.bt_ranking && run.bt_ranking.length){
+        return run.bt_ranking.map(function(r){ return {id: r.id, rank: r.rank}; });
+      }
+      // Legacy fallback: win-count from run.result (raw comparisons)
+      var allItems = lineMode ? lines : pairings;
+      var wins = {};
+      allItems.forEach(function(it){ wins[it.id] = 0; });
+      (run.result||[]).forEach(function(r){ if(wins[r.llmWinner] !== undefined) wins[r.llmWinner]++; });
+      var sorted2 = allItems.slice().sort(function(a,b){
+        var d = wins[b.id] - wins[a.id]; return d !== 0 ? d : a.id - b.id;
+      });
+      return sorted2.map(function(it, i){ return {id: it.id, rank: i+1}; });
+    }
+    var runResult = run.result !== undefined ? run.result : run;
+    if(method === 'scoring'){
+      var sorted = runResult.slice().sort(function(a,b){ return b.score - a.score; });
+      return sorted.map(function(r, i){
+        var o = {}; o[idKey] = r[idKey]; o.rank = i+1; return o;
+      });
+    } else {
+      return runResult; // rankall already has rank field
+    }
+  }
+
+  function _rho(listA, listB){
+    var key = method === 'pairwise' ? 'id' : idKey;
+    return _spearmanBetween(listA, listB, key);
+  }
+
+  var r1 = _toRankList(storeEntry.runs[0]);
+  var r2 = _toRankList(storeEntry.runs[1]);
+  var r1_r2 = +(_rho(r1, r2).toFixed(3));
+
+  var r1_r3 = null, r2_r3 = null;
+  if(storeEntry.runs.length >= 3){
+    var r3 = _toRankList(storeEntry.runs[2]);
+    r1_r3 = +(_rho(r1, r3).toFixed(3));
+    r2_r3 = +(_rho(r2, r3).toFixed(3));
+  }
+
+  var minRho = r1_r3 !== null ? Math.min(r1_r2, r1_r3, r2_r3) : r1_r2;
+  var status = minRho > 0.9 ? 'stable' : minRho >= 0.7 ? 'marginal' : 'unstable';
+  return { r1_r2: r1_r2, r1_r3: r1_r3, r2_r3: r2_r3, status: status };
+}
+
+function _mergeRankRuns(runs){
+  var idKey=runs[0][0]&&runs[0][0].pairingId!==undefined?'pairingId':'lineId';
+  var ids=runs[0].map(function(r){return r[idKey];});
+  var merged=ids.map(function(id){
+    var entries=runs.map(function(run){return run.find(function(r){return r[idKey]===id;});}).filter(Boolean);
+    var ranks=entries.map(function(e){return e.rank;}).sort(function(a,b){return a-b;});
+    var finalRank=runs.length===3?ranks[1]:Math.round((ranks[0]+ranks[1])/2);
+    return Object.assign({},entries[0],{rank:finalRank,_merged:true,_runs:runs.length,_rankRuns:ranks});
+  });
+  merged.sort(function(a,b){return a.rank-b.rank;});
+  merged.forEach(function(r,i){r.rank=i+1;});
+  return merged;
+}
+
+function _mergeScoreRuns(runs){
+  var idKey=runs[0][0]&&runs[0][0].pairingId!==undefined?'pairingId':'lineId';
+  var ids=runs[0].map(function(r){return r[idKey];});
+  var merged=ids.map(function(id){
+    var entries=runs.map(function(run){return run.find(function(r){return r[idKey]===id;});}).filter(Boolean);
+    var scores=entries.map(function(e){return e.score;}).sort(function(a,b){return a-b;});
+    var finalScore=runs.length===3?scores[1]:Math.round((scores[0]+scores[1])/2);
+    return Object.assign({},entries[entries.length-1],{score:finalScore,_merged:true,_runs:runs.length,_scoreRuns:scores});
+  });
+  merged.sort(function(a,b){return b.score-a.score;});
+  return merged;
+}
+
+function _mergePairwiseRuns(runs){
+  if(runs.length===1) return runs[0];
+  var merged=[];
+  runs[0].forEach(function(pair0){
+    var winners=runs.map(function(run){
+      var r=run.find(function(r){return r.idA===pair0.idA&&r.idB===pair0.idB;});
+      return r?r.llmWinner:null;
+    }).filter(function(w){return w!==null;});
+    var voteA=winners.filter(function(w){return w===pair0.idA;}).length;
+    var finalWinner=voteA*2>=winners.length?pair0.idA:pair0.idB;
+    var base=runs[runs.length-1].find(function(r){return r.idA===pair0.idA&&r.idB===pair0.idB;})||pair0;
+    merged.push(Object.assign({},base,{llmWinner:finalWinner,correct:finalWinner===pair0.oracleWinner,_merged:true,_runs:runs.length}));
+  });
+  return merged;
+}
+
+function _consistencyPill(consistency, mode){
+  if(!consistency) return '';
+  var st=consistency.stability, m=consistency.metric, ran3=consistency.ranThree;
+  var color=st==='stable'?'#16a34a':st==='marginal'?'#d97706':'#dc2626';
+  var bg   =st==='stable'?'#f0fdf4':st==='marginal'?'#fffbeb':'#fef2f2';
+  var icon =st==='stable'?'✓':st==='marginal'?'▲':'✗';
+  var label=st==='stable'?'Consistent':st==='marginal'?'Somewhat consistent':'Inconsistent';
+
+  var detail='';
+  if(mode==='rankall'){
+    // Spearman ρ measures rank-order agreement between two runs (1 = identical order, 0 = no relation, −1 = reversed)
+    detail='Rank agreement between runs: ρ='+m+' (1=perfect, 0=random)';
+  } else if(mode==='scoring'){
+    // max σ is the largest score difference for any single item across runs (lower = more stable)
+    detail='Largest score gap between runs: '+m+' points (out of 100)';
+  } else {
+    detail=m+(m===0?' — all pairs chosen the same both runs':m===1?' — 1 pair chosen differently across runs':' pairs chosen differently across runs');
+  }
+
+  var mergeNote=ran3
+    ? 'Result = median of 3 runs (3rd run triggered because runs 1 & 2 disagreed)'
+    : 'Result = average of 2 runs';
+
+  var tooltip=detail+'. '+mergeNote+'.';
+
+  return '<span title="'+tooltip+'" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:monospace;padding:2px 8px;border-radius:10px;background:'+bg+';color:'+color+';border:1px solid '+color+';vertical-align:middle;cursor:help">'
+    +icon+' <strong>'+label+'</strong> &nbsp;·&nbsp; '+detail+' &nbsp;·&nbsp; '+mergeNote+'</span>';
+}
+
 function stopAutoRun(){ _autoRunStopped = true; }
 
 function _scorePilotFromResult(p, llmResult){
@@ -3447,6 +4328,8 @@ async function runAllPilotsBackend(){
   runBtn.disabled = true;
   stopBtn.style.display = '';
   const errors = [];
+  const _t0 = Date.now();
+  _runTimings.rankall = { startedAt: new Date().toISOString(), durationMs: null, stopped: false };
 
   for(let i = 0; i < pilots.length; i++){
     if(_autoRunStopped){
@@ -3455,36 +4338,66 @@ async function runAllPilotsBackend(){
       break;
     }
     const p = pilots[i];
-    statusEl.style.color = '#2563eb';
-    statusEl.textContent = 'Scoring Capt. ' + p.name + '… (' + (i+1) + '/' + pilots.length + ')';
+    const prompt = lineMode ? buildLinePrompt(p) : buildPrompt(p);
+    let runs = [];
+    let consistency = null;
 
-    try{
-      var prompt = lineMode ? buildLinePrompt(p) : buildPrompt(p);
-      const text = await postBackendPrompt(prompt);
-      const llmResult = parseLlmJsonArray(text);
-      if(llmResult===null) throw new Error('Could not parse JSON array from LLM response');
-      if(lineMode){
-        scorePilotLineModeFromParsed(p, llmResult);
-      } else {
-        _scorePilotFromResult(p, llmResult);
+    for(let runIdx = 1; runIdx <= 3; runIdx++){
+      if(_autoRunStopped) break;
+      if(runIdx === 3 && (!consistency || consistency.stability !== 'unstable')) break;
+
+      statusEl.style.color = '#2563eb';
+      statusEl.textContent = 'Capt. ' + p.name + ' — run ' + runIdx + (runIdx < 3 ? '/2' : '/3 → consistency') + ' (' + (i+1) + '/' + pilots.length + ')';
+
+      try{
+        const text = await postBackendPrompt(prompt);
+        const llmResult = parseLlmJsonArray(text);
+        if(llmResult===null) throw new Error('Could not parse JSON array from LLM response');
+        runs.push(llmResult);
+      }catch(e){
+        errors.push('Capt. ' + p.name + ' run' + runIdx + ': ' + (e.message||e));
+        statusEl.style.color = '#d97706';
+        statusEl.textContent = 'Error — ' + p.name + ' run' + runIdx + ': ' + (e.message||e) + '. Continuing…';
+        await new Promise(r => setTimeout(r, 1500));
+        break;
       }
-      updateEvalProgress();
-      selectEvalPilot(p.id);
-    }catch(e){
-      errors.push('Capt. ' + p.name + ': ' + (e.message||e));
-      statusEl.style.color = '#d97706';
-      statusEl.textContent = 'Error — ' + p.name + ': ' + (e.message||e) + '. Continuing…';
-      await new Promise(r => setTimeout(r, 1500));
+
+      if(runIdx === 2 && runs.length === 2){
+        consistency = _checkRankConsistency(runs[0], runs[1]);
+        statusEl.style.color = '#2563eb';
+        statusEl.textContent = 'Capt. ' + p.name + ' — consistency: ' + consistency.stability + ' (ρ≈' + consistency.metric + ') — ' + (i+1) + '/' + pilots.length;
+        if(consistency.stability !== 'unstable') await new Promise(r => setTimeout(r, 400));
+      }
     }
+
+    if(runs.length >= 2){
+      const ranThree = runs.length === 3;
+      if(consistency) consistency.ranThree = ranThree;
+      const finalResult = _mergeRankRuns(runs);
+      resultsStore.rankall[p.id] = {
+        runs: runs.map(function(r, ri){ return {runIdx: ri+1, result: r}; }),
+        consistency: consistency,
+        finalResult: finalResult
+      };
+      if(lineMode) scorePilotLineModeFromParsed(p, finalResult);
+      else _scorePilotFromResult(p, finalResult);
+    } else if(runs.length === 1){
+      if(lineMode) scorePilotLineModeFromParsed(p, runs[0]);
+      else _scorePilotFromResult(p, runs[0]);
+    }
+
+    updateEvalProgress();
+    selectEvalPilot(p.id);
   }
 
   runBtn.disabled = false;
   stopBtn.style.display = 'none';
+  if(_runTimings.rankall){ _runTimings.rankall.durationMs = Date.now() - _t0; _runTimings.rankall.stopped = _autoRunStopped; }
 
   if(!_autoRunStopped){
     const done = pilots.filter(p=>p.evalScore!==null).length;
     statusEl.style.color = errors.length ? '#d97706' : '#16a34a';
-    statusEl.textContent = 'Done — ' + done + '/' + pilots.length + ' pilots scored.'
+    statusEl.textContent = 'Done — ' + done + '/' + pilots.length + ' pilots scored (2 runs each).'
       + (errors.length ? ' Errors: ' + errors.join(' | ') : ' All succeeded.');
     renderEvalSummary();
     const sumEl = document.getElementById('evalSummary');
@@ -3542,7 +4455,8 @@ function renderLineModeEvalResult(p){
   var m=p.lineEvalMetrics||{};
   var sc=p.evalScore>=75?'green':p.evalScore<50?'red':'';
 
-  var html='<div class="score-grid">'
+  var _rcs=resultsStore.rankall[p.id]&&resultsStore.rankall[p.id].consistency;
+  var html=(_rcs?'<div style="margin-bottom:8px">'+_consistencyPill(_rcs,'rankall')+'</div>':'')+'<div class="score-grid">'
     +'<div class="score-box"><div class="score-num">'+m.spearman+'</div><div class="score-lbl">spearman \u03c1</div></div>'
     +'<div class="score-box '+(m.top1?'green':'red')+'"><div class="score-num">'+(m.top1?'\u2713':'\u2717')+'</div><div class="score-lbl">top-1 match</div></div>'
     +'<div class="score-box"><div class="score-num">'+m.eligAccuracy+'%</div><div class="score-lbl">elig. accuracy</div></div>'
@@ -3636,6 +4550,82 @@ function viewOrStartPilotPairwise(pilotId){
   }
 }
 
+/* Run one adaptive pairwise session for a pilot:
+   Round 1 → fit BT → Round 2 (targeted uncertain pairs) → fit final BT.
+   Returns {results: [...], pairs: [...], bt: BradleyTerry, fq: number} */
+async function _runAdaptivePairwisePilot(pilot, eligible, runIdx, statusEl, pilotIdx, seed){
+  const itemIds = eligible.map(it => it.id);
+  const idKey   = lineMode ? 'lineId' : 'pairingId';
+
+  /* ── Round 1: ceil(N/2) adjacent pairs ── */
+  const round1Pairs = designAdaptivePairs(itemIds, null, 2, seed !== undefined ? seed : Date.now());
+  const totalPairs  = round1Pairs.length; // will grow after Round 2
+
+  rrPilotId = pilot.id;
+  rrPairs   = round1Pairs;
+  rrStep    = 0;
+  rrResults = [];
+  showRRStep();
+
+  for(let j = 0; j < round1Pairs.length; j++){
+    if(_autoRunStopped) break;
+    if(statusEl){
+      statusEl.style.color='#2563eb';
+      statusEl.textContent='Capt. '+pilot.name+' — run '+runIdx+' · R1 pair '+(j+1)+'/'+round1Pairs.length
+        +' ('+(pilotIdx+1)+'/'+pilots.length+')…';
+    }
+    await callBackendPairwise();
+  }
+  if(_autoRunStopped) return null;
+
+  /* ── Fit provisional BT on Round-1 results ── */
+  const bt1 = new BradleyTerry(itemIds);
+  rrResults.forEach(r => bt1.addComparison(r.llmWinner, r.llmWinner === r.idA ? r.idB : r.idA));
+  bt1.fit();
+  const provRanking = bt1.ranking(); // [{id, strength, rank}]
+
+  /* ── Round 2: uncertain adjacent pairs (not yet seen) ── */
+  const round2Pairs = designAdaptivePairs(itemIds, provRanking).filter(p2 => {
+    const key = [Math.min(p2.idA, p2.idB), Math.max(p2.idA, p2.idB)].join('-');
+    return !round1Pairs.some(p1 => {
+      const k1 = [Math.min(p1.idA, p1.idB), Math.max(p1.idA, p1.idB)].join('-');
+      return k1 === key;
+    });
+  });
+
+  if(round2Pairs.length){
+    // Append round-2 pairs into the live rrPairs array so showRRStep works
+    rrPairs = rrPairs.concat(round2Pairs);
+    for(let j = 0; j < round2Pairs.length; j++){
+      if(_autoRunStopped) break;
+      if(statusEl){
+        statusEl.style.color='#2563eb';
+        statusEl.textContent='Capt. '+pilot.name+' — run '+runIdx+' · R2 pair '+(j+1)+'/'+round2Pairs.length
+          +' ('+(pilotIdx+1)+'/'+pilots.length+')…';
+      }
+      await callBackendPairwise();
+    }
+  }
+  if(_autoRunStopped) return null;
+
+  /* ── Final BT fit on all results ── */
+  const btFinal = new BradleyTerry(itemIds);
+  rrResults.forEach(r => btFinal.addComparison(r.llmWinner, r.llmWinner === r.idA ? r.idB : r.idA));
+  btFinal.fit();
+  const fq = btFinal.fitQuality();
+
+  /* Convert BT ranking to the rrResults-compatible format */
+  const finalRanked = btFinal.ranking().map(r => {
+    const res = { llmWinner: null, idA: r.id, idB: null };
+    res[idKey] = r.id;
+    res.rank   = r.rank;
+    res.btStrength = +r.strength.toFixed(4);
+    return res;
+  });
+
+  return { results: [...rrResults], pairs: [...rrPairs], btRanked: finalRanked, btRanking: btFinal.ranking(), bt: btFinal, fq };
+}
+
 async function runAllPilotsPairwiseBackend(){
   _autoRunStopped = false;
   const btn = document.getElementById('runAllPwBtn2');
@@ -3643,6 +4633,8 @@ async function runAllPilotsPairwiseBackend(){
   const statusEl = document.getElementById('pwAllStatus');
   if(btn) btn.disabled = true;
   if(stopBtn) stopBtn.style.display = '';
+  const _t0 = Date.now();
+  _runTimings.pairwise = { startedAt: new Date().toISOString(), durationMs: null, stopped: false };
 
   for(let i = 0; i < pilots.length; i++){
     if(_autoRunStopped) break;
@@ -3652,41 +4644,95 @@ async function runAllPilotsPairwiseBackend(){
       : pairings.filter(p=>pilot.qualifiedTypes.includes(p.aircraft));
     if(eligible.length < 2) continue;
 
-    const pairs = [];
-    for(let a=0; a<eligible.length; a++)
-      for(let b=a+1; b<eligible.length; b++)
-        pairs.push({idA: eligible[a].id, idB: eligible[b].id});
+    let allRunRawComps  = [];
+    let allRunBtRankings = [];
+    let allPairs        = [];
+    let consistency     = null;
+    const _baseSeed     = Date.now();
+    const idKey         = lineMode ? 'lineId' : 'pairingId';
 
-    statusEl.style.color = '#2563eb';
-    statusEl.textContent = 'Capt. '+pilot.name+' — '+(i+1)+'/'+pilots.length+' ('+pairs.length+' comparisons)…';
-    renderPwRoster(pilot.id);
-
-    rrPilotId = pilot.id;
-    rrPairs   = pairs;
-    rrStep    = 0;
-    rrResults = [];
-    showRRStep();
-
-    for(let j = 0; j < pairs.length; j++){
+    for(let runIdx = 1; runIdx <= 3; runIdx++){
       if(_autoRunStopped) break;
-      const pwStatusEl = document.getElementById('pwAutoStatus');
-      if(pwStatusEl){ pwStatusEl.style.color='#2563eb'; pwStatusEl.textContent='Pair '+(j+1)+'/'+pairs.length+'…'; }
-      await callBackendPairwise();
+      if(runIdx === 3 && (!consistency || consistency.stability !== 'unstable')) break;
+
+      statusEl.style.color = '#2563eb';
+      renderPwRoster(pilot.id);
+
+      const preLen = pwComparisons.length;
+      const runSeed = _baseSeed + (runIdx - 1) * 999983;
+
+      const run = await _runAdaptivePairwisePilot(pilot, eligible, runIdx, statusEl, i, runSeed);
+      if(!run) break;
+
+      allPairs = run.pairs;
+      allRunRawComps.push(run.results);
+      allRunBtRankings.push(run.btRanking);
+
+      if(pwComparisons.length > preLen) pwComparisons.splice(preLen, pwComparisons.length - preLen);
+      if(_autoRunStopped) break;
+
+      if(runIdx === 2 && allRunBtRankings.length === 2){
+        consistency = _checkPairwiseConsistency(allRunBtRankings[0], allRunBtRankings[1]);
+        statusEl.style.color = '#2563eb';
+        statusEl.textContent = 'Capt. '+pilot.name+' — consistency: '+consistency.stability+' (ρ='+consistency.metric+')';
+        if(consistency.stability !== 'unstable') await new Promise(r => setTimeout(r, 400));
+      }
     }
 
-    if(!_autoRunStopped){
-      _pwByPilot[pilot.id] = {rrResults: [...rrResults], rrPairs: [...rrPairs], done: true};
+    if(!_autoRunStopped && allRunRawComps.length >= 1){
+      const ranThree = allRunRawComps.length === 3;
+      if(consistency) consistency.ranThree = ranThree;
+
+      // Final BT: fit on ALL comparisons combined across runs
+      const combinedComps = allRunRawComps.reduce(function(a,c){ return a.concat(c); }, []);
+      const btCombined = new BradleyTerry(eligible.map(function(it){ return it.id; }));
+      combinedComps.forEach(function(r){ btCombined.addComparison(r.llmWinner, r.llmWinner===r.idA?r.idB:r.idA); });
+      btCombined.fit();
+      const combinedRanking = btCombined.ranking();
+      const combinedFq = btCombined.fitQuality();
+
+      // Spearman ρ between runs
+      const r1_r2 = allRunBtRankings.length >= 2 ? +(_spearmanBetween(allRunBtRankings[0], allRunBtRankings[1], 'id').toFixed(3)) : null;
+      const r1_r3 = allRunBtRankings.length >= 3 ? +(_spearmanBetween(allRunBtRankings[0], allRunBtRankings[2], 'id').toFixed(3)) : null;
+      const r2_r3 = allRunBtRankings.length >= 3 ? +(_spearmanBetween(allRunBtRankings[1], allRunBtRankings[2], 'id').toFixed(3)) : null;
+
+      const finalResult = combinedRanking.map(function(r){
+        var res = {}; res[idKey] = r.id; res.rank = r.rank; res.btStrength = +r.strength.toFixed(4); return res;
+      });
+
+      resultsStore.pairwise[pilot.id] = {
+        runs: allRunRawComps.map(function(comps, ri){
+          return { run: ri+1, comparisons: comps, bt_ranking: allRunBtRankings[ri] };
+        }),
+        consistency: {
+          r1_vs_r2_spearman: r1_r2, r1_vs_r3_spearman: r1_r3, r2_vs_r3_spearman: r2_r3,
+          status: consistency ? consistency.stability : null,
+          runs_used: allRunRawComps.length,
+          final_ranking: combinedRanking.map(function(r){ return {id:r.id, rank:r.rank, btStrength:+r.strength.toFixed(4)}; }),
+          fit_quality: combinedFq, n_total_comparisons: combinedComps.length,
+          ranThree: ranThree
+        },
+        finalResult: finalResult,
+        btFitQuality: combinedFq
+      };
+      _pwByPilot[pilot.id] = {
+        rrResults: combinedComps, rrPairs: allPairs, done: true,
+        consistency: resultsStore.pairwise[pilot.id].consistency,
+        btFitQuality: combinedFq
+      };
+      rrResults = combinedComps;
+      combinedComps.forEach(function(r){ pwComparisons.push(Object.assign({pilotName: pilot.name}, r)); });
       renderPwRoster(pilot.id);
     }
   }
 
   if(btn) btn.disabled = false;
   if(stopBtn) stopBtn.style.display = 'none';
+  if(_runTimings.pairwise){ _runTimings.pairwise.durationMs = Date.now() - _t0; _runTimings.pairwise.stopped = _autoRunStopped; }
   if(!_autoRunStopped){
     statusEl.style.color = '#16a34a';
-    statusEl.textContent = 'All '+pilots.length+' pilots done.';
+    statusEl.textContent = 'All '+pilots.length+' pilots done (adaptive 2-round BT).';
     renderEvalSummary();
-    // Show last pilot's results
     const lastPilot = pilots[pilots.length-1];
     if(_pwByPilot[lastPilot.id]) viewOrStartPilotPairwise(lastPilot.id);
   }
@@ -3951,6 +4997,8 @@ function renderScoringResult(pilotId){
 
   var html = '<div class="card" style="border-color:#9333ea">';
   html += '<div class="card-title">Scoring result \u2014 Capt. '+pilot.name+'</div>';
+  var _cs = resultsStore.scoring[pilotId] && resultsStore.scoring[pilotId].consistency;
+  if(_cs) html += '<div style="margin-bottom:8px">'+_consistencyPill(_cs,'scoring')+'</div>';
 
   // Stats row
   html += '<div class="pw-summary">';
@@ -4069,6 +5117,8 @@ function renderLineScoringResult(pilotId){
 
   var html = '<div class="card" style="border-color:#9333ea">';
   html += '<div class="card-title">Line scoring result \u2014 Capt. '+pilot.name+'</div>';
+  var _lcs = resultsStore.scoring[pilotId] && resultsStore.scoring[pilotId].consistency;
+  if(_lcs) html += '<div style="margin-bottom:8px">'+_consistencyPill(_lcs,'scoring')+'</div>';
 
   html += '<div class="pw-summary">';
   html += '<div class="pw-stat"><div class="pw-stat-val">'+sorted.length+'</div><div class="pw-stat-lbl">lines scored</div></div>';
@@ -4153,13 +5203,15 @@ async function scoringPairingsLoop(pilotId, onProgress){
 
 async function runScoringMode(){
   _autoRunStopped = false;
-  var pilotId  = parseInt(document.getElementById('scoringPilot').value, 10);
-  var statusEl = document.getElementById('scoringStatus');
-  var barEl    = document.getElementById('scoringBar');
-  var progEl   = document.getElementById('scoringProgressLabel');
-  var btn      = document.getElementById('runScoringBtn');
-  var allBtn   = document.getElementById('runAllScoringBtn');
-  var stopBtn  = document.getElementById('stopScoringBtn');
+  var pilotId   = parseInt(document.getElementById('scoringPilot').value, 10);
+  var statusEl  = document.getElementById('scoringStatus');
+  var barEl     = document.getElementById('scoringBar');
+  var progEl    = document.getElementById('scoringProgressLabel');
+  var btn       = document.getElementById('runScoringBtn');
+  var allBtn    = document.getElementById('runAllScoringBtn');
+  var stopBtn   = document.getElementById('stopScoringBtn');
+  var unitCount = lineMode ? lines.length : getScoringPairingList().length;
+  var unitLabel = lineMode ? 'lines' : 'pairings';
 
   if(btn) btn.disabled = true;
   if(allBtn) allBtn.disabled = true;
@@ -4167,48 +5219,73 @@ async function runScoringMode(){
   document.getElementById('scoringResult').innerHTML = '';
   if(barEl) barEl.style.width = '0%';
 
-  var errors;
-  if(lineMode){
-    var total = lines.length;
-    errors = await scoringLinesLoop(pilotId, function(i, line){
-      statusEl.style.color = '#2563eb';
-      statusEl.textContent = 'Scoring Line '+line.id+' ('+(i+1)+'/'+total+')…';
-      if(barEl) barEl.style.width = Math.round((i+1)/total*100)+'%';
-      if(progEl) progEl.textContent = (i+1)+' / '+total+' lines scored';
-    });
-    if(btn) btn.disabled = false;
-    if(allBtn) allBtn.disabled = false;
-    if(stopBtn) stopBtn.style.display = 'none';
-    if(_autoRunStopped){
-      statusEl.style.color = '#888';
-      statusEl.textContent = 'Stopped.';
+  var allRuns = [];
+  var consistency = null;
+
+  for(var runIdx = 1; runIdx <= 3; runIdx++){
+    if(_autoRunStopped) break;
+    if(runIdx === 3 && (!consistency || consistency.stability !== 'unstable')) break;
+
+    var runLabel = 'Run ' + runIdx + (runIdx < 3 ? '/2' : '/3 → consistency');
+
+    if(lineMode){
+      await scoringLinesLoop(pilotId, function(i, line){
+        statusEl.style.color = '#2563eb';
+        statusEl.textContent = runLabel + ' — Line '+line.id+' ('+(i+1)+'/'+unitCount+')…';
+        if(barEl) barEl.style.width = Math.round((i+1)/unitCount*100)+'%';
+        if(progEl) progEl.textContent = runLabel + ' — '+(i+1)+'/'+unitCount+' '+unitLabel;
+      });
     } else {
-      var errMsg = errors.length ? ' | '+errors.length+' error(s): '+errors.slice(0,5).join('; ')+(errors.length>5?' …':'') : '';
-      statusEl.style.color = errors.length ? '#d97706' : '#16a34a';
-      statusEl.textContent = 'Done \u2014 '+total+'/'+total+' lines scored.'+errMsg;
-      renderLineScoringResult(pilotId);
+      await scoringPairingsLoop(pilotId, function(i, pair){
+        statusEl.style.color = '#2563eb';
+        statusEl.textContent = runLabel + ' — P'+pair.id+' ('+(i+1)+'/'+unitCount+')…';
+        if(barEl) barEl.style.width = Math.round((i+1)/unitCount*100)+'%';
+        if(progEl) progEl.textContent = runLabel + ' — '+(i+1)+'/'+unitCount+' '+unitLabel;
+      });
     }
-  } else {
-    var total = getScoringPairingList().length;
-    errors = await scoringPairingsLoop(pilotId, function(i, pair){
-      statusEl.style.color = '#2563eb';
-      statusEl.textContent = 'Scoring P'+pair.id+' ('+(i+1)+'/'+total+')…';
-      if(barEl) barEl.style.width = Math.round((i+1)/total*100)+'%';
-      if(progEl) progEl.textContent = (i+1)+' / '+total+' pairings scored';
-    });
-    if(btn) btn.disabled = false;
-    if(allBtn) allBtn.disabled = false;
-    if(stopBtn) stopBtn.style.display = 'none';
-    if(_autoRunStopped){
-      statusEl.style.color = '#888';
-      statusEl.textContent = 'Stopped before completing all pairings.';
-    } else {
-      var errMsg = errors.length ? ' | '+errors.length+' error(s): '+errors.slice(0,5).join('; ')+(errors.length>5?' …':'') : '';
-      statusEl.style.color = errors.length ? '#d97706' : '#16a34a';
-      statusEl.textContent = 'Done \u2014 '+total+'/'+total+' pairings scored.'+errMsg;
-      renderScoringResult(pilotId);
+
+    if(!_autoRunStopped){
+      var runData = lineMode ? _lineScoreByPilot[pilotId].slice() : _scoringByPilot[pilotId].slice();
+      allRuns.push(runData);
+
+      if(runIdx === 2 && allRuns.length === 2){
+        consistency = _checkScoringConsistency(allRuns[0], allRuns[1]);
+        statusEl.style.color = '#2563eb';
+        statusEl.textContent = 'Consistency: ' + consistency.stability + ' (max σ=' + consistency.metric + ' pts)';
+        if(consistency.stability !== 'unstable') await new Promise(function(r){ setTimeout(r, 600); });
+      }
     }
   }
+
+  if(btn) btn.disabled = false;
+  if(allBtn) allBtn.disabled = false;
+  if(stopBtn) stopBtn.style.display = 'none';
+
+  if(_autoRunStopped){
+    statusEl.style.color = '#888';
+    statusEl.textContent = 'Stopped.';
+    return;
+  }
+
+  if(allRuns.length >= 2){
+    var ranThree = allRuns.length === 3;
+    if(consistency) consistency.ranThree = ranThree;
+    var merged = _mergeScoreRuns(allRuns);
+    if(lineMode) _lineScoreByPilot[pilotId] = merged;
+    else _scoringByPilot[pilotId] = merged;
+    resultsStore.scoring[pilotId] = {
+      runs: allRuns.map(function(r, ri){ return {runIdx: ri+1, result: r}; }),
+      consistency: consistency,
+      finalResult: merged
+    };
+  }
+
+  statusEl.style.color = '#16a34a';
+  statusEl.textContent = 'Done — ' + unitCount + '/' + unitCount + ' ' + unitLabel + ' scored'
+    + (allRuns.length >= 2 ? ' (' + allRuns.length + ' runs, merged).' : '.');
+
+  if(lineMode) renderLineScoringResult(pilotId);
+  else renderScoringResult(pilotId);
 }
 
 async function runAllScoringPilotsBackend(){
@@ -4226,13 +5303,14 @@ async function runAllScoringPilotsBackend(){
   if(singleBt) singleBt.disabled = true;
   if(stopBtn) stopBtn.style.display = '';
   if(allStat){ allStat.textContent = ''; allStat.style.color = '#888'; }
+  var _t0 = Date.now();
+  _runTimings.scoring = { startedAt: new Date().toISOString(), durationMs: null, stopped: false };
 
-  var nPilots    = pilots.length;
-  var nUnit      = lineMode ? lines.length : getScoringPairingList().length;
-  var unitLabel  = lineMode ? 'lines' : 'pairings';
-  var totalCalls = nPilots * nUnit;
-  var grandDone  = 0;
-  var allErrors  = [];
+  var nPilots   = pilots.length;
+  var nUnit     = lineMode ? lines.length : getScoringPairingList().length;
+  var unitLabel = lineMode ? 'lines' : 'pairings';
+  var pilotsGone = 0;
+  var allErrors = [];
 
   if(barEl) barEl.style.width = '0%';
 
@@ -4242,27 +5320,62 @@ async function runAllScoringPilotsBackend(){
     if(sel) sel.value = String(p.id);
     document.getElementById('scoringResult').innerHTML = '';
 
-    var errs;
-    if(lineMode){
-      errs = await scoringLinesLoop(p.id, function(i, line, pilot){
-        grandDone++;
-        statusEl.style.color = '#2563eb';
-        statusEl.textContent = 'Capt. '+pilot.name+' \u2014 Line '+line.id+' ('+(i+1)+'/'+nUnit+' this pilot)';
-        if(allStat){ allStat.textContent = grandDone+' / '+totalCalls+' calls · pilot '+(pi+1)+' / '+nPilots; }
-        if(barEl) barEl.style.width = Math.round(grandDone/totalCalls*100)+'%';
-        if(progEl) progEl.textContent = grandDone+' / '+totalCalls+' backend calls total';
-      });
-    } else {
-      errs = await scoringPairingsLoop(p.id, function(i, pair, pilot){
-        grandDone++;
-        statusEl.style.color = '#2563eb';
-        statusEl.textContent = 'Capt. '+pilot.name+' \u2014 P'+pair.id+' ('+(i+1)+'/'+nUnit+' this pilot)';
-        if(allStat){ allStat.textContent = grandDone+' / '+totalCalls+' calls · pilot '+(pi+1)+' / '+nPilots; }
-        if(barEl) barEl.style.width = Math.round(grandDone/totalCalls*100)+'%';
-        if(progEl) progEl.textContent = grandDone+' / '+totalCalls+' backend calls total';
-      });
+    var allRuns = [];
+    var consistency = null;
+
+    for(var runIdx = 1; runIdx <= 3; runIdx++){
+      if(_autoRunStopped) break;
+      if(runIdx === 3 && (!consistency || consistency.stability !== 'unstable')) break;
+
+      var runLabel = 'Run ' + runIdx + (runIdx < 3 ? '/2' : '/3');
+      var errs;
+      if(lineMode){
+        errs = await scoringLinesLoop(p.id, function(i, line, pilot){
+          statusEl.style.color = '#2563eb';
+          statusEl.textContent = 'Capt. '+pilot.name+' — '+runLabel+' — Line '+line.id+' ('+(i+1)+'/'+nUnit+' this pilot)';
+          if(allStat){ allStat.textContent = runLabel+' · pilot '+(pi+1)+'/'+nPilots; }
+          if(barEl) barEl.style.width = Math.round((pilotsGone/nPilots)*100)+'%';
+          if(progEl) progEl.textContent = 'Pilot '+(pi+1)+'/'+nPilots+' — '+runLabel+' — '+(i+1)+'/'+nUnit+' '+unitLabel;
+        });
+      } else {
+        errs = await scoringPairingsLoop(p.id, function(i, pair, pilot){
+          statusEl.style.color = '#2563eb';
+          statusEl.textContent = 'Capt. '+pilot.name+' — '+runLabel+' — P'+pair.id+' ('+(i+1)+'/'+nUnit+' this pilot)';
+          if(allStat){ allStat.textContent = runLabel+' · pilot '+(pi+1)+'/'+nPilots; }
+          if(barEl) barEl.style.width = Math.round((pilotsGone/nPilots)*100)+'%';
+          if(progEl) progEl.textContent = 'Pilot '+(pi+1)+'/'+nPilots+' — '+runLabel+' — '+(i+1)+'/'+nUnit+' '+unitLabel;
+        });
+      }
+      allErrors = allErrors.concat(errs||[]);
+
+      if(!_autoRunStopped){
+        var runData = lineMode ? _lineScoreByPilot[p.id].slice() : _scoringByPilot[p.id].slice();
+        allRuns.push(runData);
+
+        if(runIdx === 2 && allRuns.length === 2){
+          consistency = _checkScoringConsistency(allRuns[0], allRuns[1]);
+          statusEl.style.color = '#2563eb';
+          statusEl.textContent = 'Capt. '+p.name+' — consistency: '+consistency.stability+' (max σ='+consistency.metric+' pts)';
+          if(consistency.stability !== 'unstable') await new Promise(function(r){ setTimeout(r, 400); });
+        }
+      }
     }
-    allErrors = allErrors.concat(errs||[]);
+
+    if(!_autoRunStopped && allRuns.length >= 2){
+      var ranThree = allRuns.length === 3;
+      if(consistency) consistency.ranThree = ranThree;
+      var merged = _mergeScoreRuns(allRuns);
+      if(lineMode) _lineScoreByPilot[p.id] = merged;
+      else _scoringByPilot[p.id] = merged;
+      resultsStore.scoring[p.id] = {
+        runs: allRuns.map(function(r, ri){ return {runIdx: ri+1, result: r}; }),
+        consistency: consistency,
+        finalResult: merged
+      };
+    }
+
+    pilotsGone++;
+    if(barEl) barEl.style.width = Math.round(pilotsGone/nPilots*100)+'%';
 
     if(!_autoRunStopped){
       if(lineMode) renderLineScoringResult(p.id);
@@ -4274,16 +5387,1586 @@ async function runAllScoringPilotsBackend(){
   if(runBtn) runBtn.disabled = false;
   if(singleBt) singleBt.disabled = false;
   if(stopBtn) stopBtn.style.display = 'none';
+  if(_runTimings.scoring){ _runTimings.scoring.durationMs = Date.now() - _t0; _runTimings.scoring.stopped = _autoRunStopped; }
 
   if(_autoRunStopped){
     statusEl.style.color = '#888';
-    statusEl.textContent = 'Stopped \u2014 '+grandDone+' / '+totalCalls+' calls finished.';
+    statusEl.textContent = 'Stopped — '+pilotsGone+' / '+nPilots+' pilots completed.';
     if(allStat){ allStat.style.color = '#888'; }
   } else {
     statusEl.style.color = allErrors.length ? '#d97706' : '#16a34a';
-    statusEl.textContent = 'All '+nPilots+' pilots scored ('+totalCalls+' calls).'+ (allErrors.length ? ' Some errors: '+allErrors.length+'. See status above per run.' : '');
+    statusEl.textContent = 'All '+nPilots+' pilots scored (2+ runs each).'+ (allErrors.length ? ' Some errors: '+allErrors.length+'.' : '');
     if(allStat){ allStat.textContent = 'Complete'; allStat.style.color = '#16a34a'; }
   }
+}
+
+/* ══════════════════════════════════════════
+   RESULTS COMPARISON — multi-method panel
+══════════════════════════════════════════ */
+
+function _oracleRankList(pilot, idKey) {
+  var info = _oracleMapForPilot(pilot);
+  var oMap = info.m;
+  return Object.keys(oMap).map(function(id) {
+    var e = {}; e[idKey] = parseInt(id, 10); e.rank = oMap[id]; return e;
+  });
+}
+
+function computeAllCorrelations() {
+  var idKey = lineMode ? 'lineId' : 'pairingId';
+  var llmMethods = ['rankall', 'scoring', 'pairwise'];
+  var methodPairs = [
+    ['oracle','rankall'],['oracle','scoring'],['oracle','pairwise'],
+    ['rankall','scoring'],['rankall','pairwise'],['scoring','pairwise'],
+  ];
+
+  var pilotResults = pilots.map(function(pilot) {
+    var info = _oracleMapForPilot(pilot);
+    var oMap = info.m;
+    var lists = {};
+    lists.oracle = _oracleRankList(pilot, idKey);
+    var raS = resultsStore.rankall[pilot.id];
+    lists.rankall = raS && raS.finalResult ? raS.finalResult : null;
+    var scS = resultsStore.scoring[pilot.id];
+    lists.scoring = scS && scS.finalResult ? _scoresToRanked(scS.finalResult, idKey) : null;
+    var pwS = resultsStore.pairwise[pilot.id];
+    lists.pairwise = pwS && pwS.finalResult ? _pwToRanked(pwS.finalResult, idKey) : null;
+
+    var oTG = _getOracleTiedGroups(pilot, idKey);
+    var sTG = _getScoringTiedGroups(pilot, idKey);
+
+    function listToGroups(list) {
+      if (!list) return null;
+      var sorted = list.slice().sort(function(a, b) { return a.rank - b.rank; });
+      return sorted.map(function(r) { return [r[idKey]]; });
+    }
+
+    var raGroups = listToGroups(lists.rankall);
+
+    // Debug: log ordered ID arrays so misalignment (type mismatch, length diff,
+    // or ID-vs-rank confusion) is visible in the browser console.
+    var oracleRanking = oTG ? oTG.map(function(g) { return g.length === 1 ? g[0] : g; }) : null;
+    var rankAllRanking = raGroups ? raGroups.map(function(g) { return g[0]; }) : null;
+    console.log('Oracle ranking for', pilot.name, oracleRanking);
+    console.log('RankAll ranking for', pilot.name, rankAllRanking);
+
+    var groupsMap = {
+      oracle:   oTG,
+      scoring:  sTG,
+      rankall:  raGroups,
+      pairwise: listToGroups(lists.pairwise),
+    };
+
+    var corr = {};
+    methodPairs.forEach(function(pair) {
+      var key = pair[0]+'_vs_'+pair[1];
+      var m1 = pair[0], m2 = pair[1];
+      if (m1==='oracle'||m1==='scoring'||m2==='oracle'||m2==='scoring') {
+        var gA = groupsMap[m1], gB = groupsMap[m2];
+        corr[key] = (gA && gB) ? spearmanWithTies(gA, gB) : null;
+      } else {
+        var a = lists[m1], b = lists[m2];
+        corr[key] = (a && b) ? _spearmanBetween(a, b, idKey) : null;
+      }
+    });
+
+    var oTop3 = {};
+    (lists.oracle || []).forEach(function(r) { if(r.rank<=3) oTop3[r[idKey]]=true; });
+    var top1 = {}, top3 = {};
+    llmMethods.forEach(function(m) {
+      var list = lists[m];
+      if(!list){ top1[m]=null; top3[m]=null; return; }
+      var sorted = list.slice().sort(function(a,b){return a.rank-b.rank;});
+      top1[m] = sorted.length>0 && oMap[sorted[0][idKey]]===1;
+      top3[m] = list.filter(function(r){return r.rank<=3;}).filter(function(r){return oTop3[r[idKey]];}).length;
+    });
+
+    // Within-method consistency ρ
+    var within = {
+      rankall:  _withinMethodRho(raS, 'rankall'),
+      scoring:  _withinMethodRho(scS, 'scoring'),
+      pairwise: _withinMethodRho(pwS, 'pairwise'),
+    };
+
+    return {pilot:pilot, lists:lists, corr:corr, top1:top1, top3:top3, oMap:oMap, within:within,
+            oracleTiedGroups:oTG, scoringTiedGroups:sTG,
+            oracleTiedPairs:_countTiedPairs(oTG), scoringTiedPairs:sTG?_countTiedPairs(sTG):0};
+  });
+
+  var aggregate = {};
+  methodPairs.forEach(function(pair) {
+    var key = pair[0]+'_vs_'+pair[1];
+    var vals = pilotResults.map(function(r){return r.corr[key];}).filter(function(v){return v!==null;});
+    aggregate[key] = vals.length ? +(vals.reduce(function(s,v){return s+v;},0)/vals.length).toFixed(3) : null;
+  });
+
+  // Aggregate within-method ρ
+  var aggWithin = {};
+  ['rankall','scoring','pairwise'].forEach(function(m){
+    var vals = pilotResults.map(function(r){ return r.within[m] ? r.within[m].r1_r2 : null; })
+                            .filter(function(v){ return v !== null; });
+    aggWithin[m] = vals.length
+      ? { mean_r1_r2: +(vals.reduce(function(s,v){return s+v;},0)/vals.length).toFixed(3),
+          status: vals.reduce(function(s,v){return s+v;},0)/vals.length > 0.9 ? 'stable'
+                  : vals.reduce(function(s,v){return s+v;},0)/vals.length >= 0.7 ? 'marginal' : 'unstable',
+          n: vals.length }
+      : null;
+  });
+  aggregate.within = aggWithin;
+
+  var result = {timestamp:new Date().toISOString(),idKey:idKey,methodPairs:methodPairs,pilotResults:pilotResults,aggregate:aggregate};
+  comparisonStore.computed = result;
+  return result;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   UNIFIED COMPARISON PANEL
+   Shows per-pilot cards with:
+     1. METHOD CONSISTENCY  — within-method ρ bars
+     2. METHOD AGREEMENT    — between-method ρ matrix
+     3. RANKING COMPARISON  — rank table vs oracle
+   Then an AGGREGATE panel (auto key-finding) at the bottom.
+────────────────────────────────────────────────────────────────────────── */
+
+/* helper – coloured status pill */
+function _statusPill(status){
+  var map = {stable:'#16a34a',marginal:'#d97706',unstable:'#dc2626'};
+  var bg  = {stable:'#f0fdf4',marginal:'#fffbeb',unstable:'#fef2f2'};
+  var col = map[status]||'#888'; var b = bg[status]||'#f8fafc';
+  var label = status ? status.charAt(0).toUpperCase()+status.slice(1) : '—';
+  return '<span style="padding:1px 7px;border-radius:10px;font-size:9px;font-weight:600;background:'+b+';color:'+col+'">'+label+'</span>';
+}
+
+/* helper – within-method ρ progress bar row */
+function _withinBar(label, color, rhoEntry, storeEntry, extraText){
+  var s = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:11px;font-family:monospace">';
+  s += '<span style="width:72px;flex-shrink:0;color:'+color+';font-weight:500">'+label+'</span>';
+  if(!storeEntry || !storeEntry.runs){
+    s += '<span style="color:#94a3b8">— Not run yet</span>';
+  } else if(storeEntry.runs.length < 2){
+    s += '<span style="color:#d97706">— Only 1 run (re-run to check consistency)</span>';
+  } else if(!rhoEntry){
+    s += '<span style="color:#94a3b8">— (error)</span>';
+  } else {
+    var rho = rhoEntry.r1_r2;
+    var status = rhoEntry.status;
+    var barColor = status==='stable'?'#16a34a':status==='marginal'?'#d97706':'#dc2626';
+    var pct = Math.max(0,Math.min(100,(rho+1)/2*100)); // map [-1,+1]→[0,100]
+    s += '<div style="flex:1;background:#f1f5f9;border-radius:4px;height:10px;position:relative;overflow:hidden">';
+    s += '<div style="position:absolute;left:50%;width:'+Math.abs(rho)*50+'%;background:'+barColor+';height:100%;'+(rho>=0?'':'transform:translateX(-100%)')+'" ></div>';
+    s += '</div>';
+    s += '<span style="width:38px;text-align:right;color:'+barColor+';font-weight:600">ρ='+rho.toFixed(2)+'</span>';
+    s += _statusPill(status);
+    if(rhoEntry.r1_r3 !== null){
+      s += '<span style="color:#94a3b8;font-size:9px">r2-r3:'+rhoEntry.r2_r3.toFixed(2)+'</span>';
+    }
+    if(extraText){
+      s += '<span style="color:#94a3b8;font-size:9px">'+extraText+'</span>';
+    }
+  }
+  s += '</div>';
+  return s;
+}
+
+/* helper – colour for matrix cell */
+function _matrixBg(rho){
+  if(rho===null||rho===undefined) return '#f8fafc';
+  if(rho>0.8) return '#dcfce7'; if(rho>0.6) return '#fef9c3';
+  if(rho>0.4) return '#ffedd5'; return '#fee2e2';
+}
+function _matrixFg(rho){
+  if(rho===null||rho===undefined) return '#94a3b8';
+  if(rho>0.8) return '#15803d'; if(rho>0.6) return '#92400e';
+  if(rho>0.4) return '#9a3412'; return '#991b1b';
+}
+
+/* helper – between-method matrix for one pilot or aggregate */
+function _betweenMatrix(corrObj, mLabels, mColors, mKeys, aggObj){
+  var allMethods = mKeys;
+  var s = '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:10px;font-family:monospace;margin-bottom:4px">';
+  s += '<tr><th style="padding:3px 8px;color:#888;font-weight:400"></th>';
+  allMethods.forEach(function(m){ s+='<th style="text-align:center;padding:3px 8px;color:'+mColors[m]+';font-weight:500;font-size:10px">'+mLabels[m]+'</th>'; });
+  s += '</tr>';
+  allMethods.forEach(function(rowM){
+    s += '<tr>';
+    s += '<td style="padding:3px 8px;color:'+mColors[rowM]+';font-weight:500;white-space:nowrap;font-size:10px">'+mLabels[rowM]+'</td>';
+    allMethods.forEach(function(colM){
+      if(rowM===colM){
+        s += '<td style="text-align:center;padding:3px 10px;background:#f1f5f9;color:#555;font-weight:500">1.00</td>';
+        return;
+      }
+      var rho;
+      if(corrObj){
+        var k1=rowM+'_vs_'+colM, k2=colM+'_vs_'+rowM;
+        rho=(corrObj[k1]!==undefined&&corrObj[k1]!==null)?corrObj[k1]:(corrObj[k2]!==undefined&&corrObj[k2]!==null)?corrObj[k2]:null;
+      } else if(aggObj){
+        var k1=rowM+'_vs_'+colM, k2=colM+'_vs_'+rowM;
+        rho=(aggObj[k1]!==undefined&&aggObj[k1]!==null)?aggObj[k1]:(aggObj[k2]!==undefined&&aggObj[k2]!==null)?aggObj[k2]:null;
+      }
+      if(rho===null||rho===undefined){
+        s += '<td style="text-align:center;padding:3px 10px;background:#f8fafc;color:#94a3b8">—</td>';
+      } else {
+        var bg=_matrixBg(rho), fg=_matrixFg(rho);
+        s += '<td style="text-align:center;padding:3px 10px;background:'+bg+';color:'+fg+';font-weight:600">'+rho.toFixed(2)+'</td>';
+      }
+    });
+    s += '</tr>';
+  });
+  s += '</table></div>';
+  return s;
+}
+
+/* helper – line-centric ranking comparison table.
+   One row per line, sorted by oracle rank.
+   Columns: Line | Oracle | Rank-all | Scoring | Pairwise
+   Method cells coloured by |method_rank - oracle_rank|:
+     0 diff → green, 1-2 → amber, 3+ → red, oracle tied → grey.
+   Summary line below: Spearman ρ vs oracle + Top-1 per method. */
+function _rankingComparisonTable(pr, idKey, itemLabel, allItems, mLabels, mColors){
+  var oTG = pr.oracleTiedGroups || _getOracleTiedGroups(pr.pilot, idKey);
+
+  // Build per-item oracle info: id → { startRank, tied }
+  var oInfo = {};
+  var pos = 1;
+  oTG.forEach(function(group) {
+    var isTied = group.length > 1;
+    group.forEach(function(id) { oInfo[id] = { startRank: pos, tied: isTied }; });
+    pos += group.length;
+  });
+
+  // Build per-item rank map for each LLM method
+  var mRankMap = {};
+  ['rankall','scoring','pairwise'].forEach(function(m) {
+    if (pr.lists[m]) {
+      var map = {};
+      pr.lists[m].forEach(function(r) { map[r[idKey]] = r.rank; });
+      mRankMap[m] = map;
+    }
+  });
+
+  // Sort lines by oracle start rank (ties appear consecutively)
+  var sorted = allItems.slice().sort(function(a, b) {
+    var ra = oInfo[a.id] ? oInfo[a.id].startRank : 9999;
+    var rb = oInfo[b.id] ? oInfo[b.id].startRank : 9999;
+    return ra - rb;
+  });
+
+  // ── Table ──────────────────────────────────────────────────────
+  var s = '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:10px;font-family:monospace;white-space:nowrap">';
+
+  // Header
+  s += '<tr style="border-bottom:2px solid #e2e8f0">';
+  s += '<th style="text-align:left;padding:3px 8px;color:#888;font-weight:400">'+(lineMode?'Line':'Pairing')+'</th>';
+  s += '<th style="text-align:center;padding:3px 8px;color:'+mColors.oracle+';font-weight:500">Oracle</th>';
+  ['rankall','scoring','pairwise'].forEach(function(m) {
+    s += '<th style="text-align:center;padding:3px 8px;color:'+mColors[m]+';font-weight:400">'+mLabels[m]+'</th>';
+  });
+  s += '</tr>';
+
+  // One row per line
+  sorted.forEach(function(item) {
+    var id = item.id;
+    var oi = oInfo[id];
+    if (!oi) return;
+
+    s += '<tr style="border-bottom:1px solid #f8fafc">';
+
+    // Line label
+    s += '<td style="text-align:left;padding:2px 8px;color:#374151;font-weight:500">'+itemLabel+id+'</td>';
+
+    // Oracle rank cell
+    var oRankStr = String(oi.startRank) + (oi.tied ? '~' : '');
+    var oStyle = oi.tied
+      ? 'text-align:center;padding:2px 8px;background:#f1f5f9;color:#9ca3af'
+      : 'text-align:center;padding:2px 8px;color:#374151;font-weight:500';
+    s += '<td style="'+oStyle+'">'+oRankStr+'</td>';
+
+    // Method cells
+    ['rankall','scoring','pairwise'].forEach(function(m) {
+      if (!mRankMap[m]) {
+        s += '<td style="text-align:center;padding:2px 8px;color:#cbd5e1">—</td>';
+        return;
+      }
+      var mRank = mRankMap[m][id];
+      if (mRank === undefined) {
+        s += '<td style="text-align:center;padding:2px 8px;color:#cbd5e1">—</td>';
+        return;
+      }
+      if (oi.tied) {
+        // Oracle rank is ambiguous — grey, append ~ to both values
+        s += '<td style="text-align:center;padding:2px 8px;background:#f1f5f9;color:#9ca3af">'+mRank+'</td>';
+        return;
+      }
+      var diff = Math.abs(mRank - oi.startRank);
+      var bg, fg;
+      if      (diff === 0) { bg = '#f0fdf4'; fg = '#16a34a'; }
+      else if (diff <= 2)  { bg = '#fffbeb'; fg = '#d97706'; }
+      else                 { bg = '#fef2f2'; fg = '#dc2626'; }
+      s += '<td style="text-align:center;padding:2px 8px;background:'+bg+';color:'+fg+';font-weight:600">'+mRank+'</td>';
+    });
+
+    s += '</tr>';
+  });
+
+  s += '</table></div>';
+
+  // ── Per-method summary line ────────────────────────────────────
+  var summaryParts = [];
+  ['rankall','scoring','pairwise'].forEach(function(m) {
+    if (!pr.lists[m]) return;
+    var rho = pr.corr['oracle_vs_'+m];
+    var rhoStr = (rho !== null && rho !== undefined) ? rho.toFixed(2) : '—';
+    var t1 = pr.top1[m];
+    var t1Str = t1 === null ? '—' : (t1 ? '✓' : '✗');
+    summaryParts.push(
+      '<span style="color:'+mColors[m]+';font-weight:500">'+mLabels[m]+'</span>'
+      +' ρ\u202f=\u202f'+rhoStr
+      +'\u2009·\u2009Top-1\u202f'+t1Str
+    );
+  });
+  if (summaryParts.length) {
+    s += '<div style="font-size:10px;font-family:monospace;color:#6b7280;margin-top:5px">'
+      + 'Spearman ρ vs oracle\u2003'
+      + summaryParts.join('\u2003·\u2003')
+      + '</div>';
+  }
+
+  return s;
+}
+
+function _renderComparisonPanel() {
+  var hasAny = pilots.some(function(p){
+    return resultsStore.rankall[p.id]||resultsStore.scoring[p.id]||resultsStore.pairwise[p.id];
+  });
+  if(!hasAny) return '';
+
+  var idKey = lineMode ? 'lineId' : 'pairingId';
+  var itemLabel = lineMode ? 'Line ' : 'P';
+  var allItems = lineMode ? lines : pairings;
+  var mColors = {oracle:'#374151',rankall:'#1d4ed8',scoring:'#7e22ce',pairwise:'#16a34a'};
+  var mLabels = {oracle:'Oracle',rankall:'Rank-all',scoring:'Scoring',pairwise:'Pairwise'};
+  var mKeys   = ['oracle','rankall','scoring','pairwise'];
+  var llmMethods = ['rankall','scoring','pairwise'];
+  var computed = computeAllCorrelations();
+
+  var html = '<div class="card" style="margin-bottom:1.5rem;border-color:#94a3b8">';
+  html += '<div class="card-title" style="color:#475569">Per-Pilot Detail</div>';
+  html += '<div style="font-size:10px;font-family:monospace;color:#94a3b8;margin-bottom:10px">Click a pilot to expand consistency bars, method agreement, and ranking breakdown.</div>';
+
+  computed.pilotResults.forEach(function(pr){
+    var pilot = pr.pilot;
+    var raS = resultsStore.rankall[pilot.id];
+    var scS = resultsStore.scoring[pilot.id];
+    var pwS = resultsStore.pairwise[pilot.id];
+
+    /* Build ρ-vs-oracle chips for the collapsed summary line */
+    var chipParts = [];
+    llmMethods.forEach(function(m){
+      var rho = pr.corr['oracle_vs_'+m];
+      if(rho===null||rho===undefined) return;
+      var c = rho>0.8?'#16a34a':rho>0.6?'#d97706':'#dc2626';
+      chipParts.push('<span style="color:'+mColors[m]+';font-weight:600">'+mLabels[m]+'</span>'
+        +' <span style="color:'+c+';font-weight:700;font-family:monospace">'+rho.toFixed(2)+'</span>');
+    });
+
+    html += '<details style="border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;overflow:hidden">';
+
+    /* Summary row (always visible) */
+    html += '<summary style="background:#f8fafc;padding:10px 14px;cursor:pointer;user-select:none">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">';
+    html += '<div style="display:flex;align-items:center;gap:8px">';
+    html += '<span style="font-size:12px;font-weight:600;color:#1a1a1a">'+pilot.name+'</span>';
+    html += '<span style="font-size:10px;color:#9ca3af;font-family:monospace">#'+pilot.seniority+' · '+pilot.homeBase+'</span>';
+    html += '</div>';
+    if(chipParts.length){
+      html += '<div style="font-size:11px;display:flex;gap:14px;flex-wrap:wrap">'+chipParts.join('')+'</div>';
+    }
+    html += '</div>';
+    html += '</summary>';
+
+    /* Expanded body */
+    html += '<div style="padding:14px">';
+
+    /* Section 1: Within-run consistency bars */
+    html += '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#6b7280;text-transform:uppercase;margin-bottom:8px">Run Consistency</div>';
+    var scoringTieNote = (pr.scoringTiedPairs||0) > 0
+      ? '('+(pr.scoringTiedPairs)+' tied pair'+((pr.scoringTiedPairs)!==1?'s':'')+')'
+      : null;
+    html += _withinBar('Rank-all', mColors.rankall, pr.within.rankall, raS);
+    html += _withinBar('Scoring',  mColors.scoring,  pr.within.scoring,  scS, scoringTieNote);
+    html += _withinBar('Pairwise', mColors.pairwise, pr.within.pairwise, pwS);
+
+    /* Section 2: Per-pilot method agreement matrix */
+    html += '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#6b7280;text-transform:uppercase;margin-top:14px;margin-bottom:6px">Method Agreement</div>';
+    html += _betweenMatrix(pr.corr, mLabels, mColors, mKeys, null);
+    var oTP = pr.oracleTiedPairs||0, sTP = pr.scoringTiedPairs||0;
+    if(oTP>0||sTP>0){
+      html += '<div style="font-size:9px;font-family:monospace;color:#94a3b8;margin-top:4px">';
+      html += 'Oracle: '+oTP+' tied pair'+(oTP!==1?'s':'')+' · Scoring: '+sTP+' tied pair'+(sTP!==1?'s':'');
+      html += '</div>';
+    }
+
+    /* Section 3: Ranking table — nested collapsible */
+    html += '<details style="margin-top:14px">';
+    html += '<summary style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;list-style:none;padding:4px 0">';
+    html += '&#9654; Ranking Comparison</summary>';
+    html += '<div style="margin-top:8px">';
+    html += _rankingComparisonTable(pr, idKey, itemLabel, allItems, mLabels, mColors);
+    html += '</div></details>';
+
+    html += '</div>'; // expanded body
+    html += '</details>'; // per-pilot
+  });
+
+  html += '</div>'; // outer card
+  return html;
+}
+
+function saveComparisonSnapshot() {
+  showSaveModal(function(label) {
+    var computed = computeAllCorrelations();
+    var idKey = lineMode ? 'lineId' : 'pairingId';
+    var snapshot = {
+      label: label,
+      timestamp: computed.timestamp,
+      mode: lineMode ? 'line' : 'pairing',
+      methods: {
+        oracle: true,
+        rankall:  Object.keys(resultsStore.rankall).length>0,
+        scoring:  Object.keys(resultsStore.scoring).length>0,
+        pairwise: Object.keys(resultsStore.pairwise).length>0,
+      },
+      aggregate: computed.aggregate,
+      pilotResults: computed.pilotResults.map(function(pr) {
+        var rankings = {};
+        ['oracle','rankall','scoring','pairwise'].forEach(function(m){
+          if(pr.lists[m]) rankings[m]=pr.lists[m].map(function(r){var e={};e[idKey]=r[idKey];e.rank=r.rank;return e;});
+        });
+        return {pilotId:pr.pilot.id,pilotName:pr.pilot.name,correlations:pr.corr,top1:pr.top1,top3:pr.top3,rankings:rankings};
+      }),
+    };
+    comparisonStore.snapshots.push(snapshot);
+  });
+}
+
+function exportComparisonCsv() {
+  var computed = computeAllCorrelations();
+  var idKey = lineMode ? 'lineId' : 'pairingId';
+  var unitLabel = lineMode ? 'Line' : 'Pairing';
+  var rows = [['Pilot','Method',unitLabel,'LLMRank','OracleRank','RankDiff','RhoVsOracle',
+               'Run1vsRun2_Spearman','ConsistencyStatus','RunsUsed',
+               'oracle_tied_with','oracle_rank_tied','scoring_tied_with','scoring_rank_tied',
+               'scoring_ci_lo','scoring_ci_hi']];
+  computed.pilotResults.forEach(function(pr){
+    // Build oracle tie lookups
+    var oTiedWith = {}, oRankTied = {};
+    var oTG = pr.oracleTiedGroups;
+    if (oTG) {
+      var oPos = 1;
+      oTG.forEach(function(g) {
+        var start = oPos, end = oPos + g.length - 1;
+        var rankStr = g.length > 1 ? start+'-'+end : String(start);
+        g.forEach(function(id) {
+          oRankTied[id] = rankStr;
+          oTiedWith[id] = g.filter(function(tid) { return tid !== id; }).join(',');
+        });
+        oPos += g.length;
+      });
+    }
+    // Build scoring tie lookups
+    var sTiedWith = {}, sRankTied = {};
+    var sTG = pr.scoringTiedGroups;
+    if (sTG) {
+      var sPos = 1;
+      sTG.forEach(function(g) {
+        var start = sPos, end = sPos + g.length - 1;
+        var rankStr = g.length > 1 ? start+'-'+end : String(start);
+        g.forEach(function(id) {
+          sRankTied[id] = rankStr;
+          sTiedWith[id] = g.filter(function(tid) { return tid !== id; }).join(',');
+        });
+        sPos += g.length;
+      });
+    }
+    // Build scoring CI lookups
+    var sCiLo = {}, sCiHi = {};
+    var scS = resultsStore.scoring[pr.pilot.id];
+    if (scS && scS.finalResult) {
+      var stdDevs = _scoringStdDevs(pr.pilot.id, idKey);
+      scS.finalResult.forEach(function(r) {
+        var id = r[idKey];
+        var mean = r.score, std = stdDevs[id] || 0;
+        sCiLo[id] = (mean - std).toFixed(3);
+        sCiHi[id] = (mean + std).toFixed(3);
+      });
+    }
+
+    ['rankall','scoring','pairwise'].forEach(function(m){
+      var list=pr.lists[m]; if(!list) return;
+      var rho=pr.corr['oracle_vs_'+m];
+      var wr=pr.within[m];
+      var r1r2=wr?wr.r1_r2:'';
+      var cstatus=wr?wr.status:'';
+      var storeEntry=m==='rankall'?resultsStore.rankall[pr.pilot.id]
+                    :m==='scoring'?resultsStore.scoring[pr.pilot.id]
+                    :resultsStore.pairwise[pr.pilot.id];
+      var runsUsed=storeEntry&&storeEntry.runs?storeEntry.runs.length:'';
+      list.forEach(function(r){
+        var id = r[idKey];
+        var oRank=pr.oMap[id]||'';
+        var diff=oRank!==''?Math.abs(r.rank-oRank):'';
+        rows.push([pr.pilot.name, m, id, r.rank, oRank, diff,
+                   rho!==null&&rho!==undefined?rho.toFixed(3):'',
+                   r1r2!==''?r1r2:'', cstatus, runsUsed,
+                   oTiedWith[id]||'', oRankTied[id]||String(oRank),
+                   sTiedWith[id]||'', sRankTied[id]||'',
+                   sCiLo[id]||'', sCiHi[id]||'']);
+      });
+    });
+  });
+  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  showExportModal('Comparison CSV',csv,'comparison.csv','csv');
+}
+
+function exportComparisonJson() {
+  var computed = computeAllCorrelations();
+  var data = {
+    timestamp: computed.timestamp,
+    mode: lineMode ? 'line' : 'pairing',
+    aggregate: computed.aggregate,
+    pilots: computed.pilotResults.map(function(pr){
+      var idKey = computed.idKey;
+      var rankings={};
+      ['oracle','rankall','scoring','pairwise'].forEach(function(m){if(pr.lists[m]) rankings[m]=pr.lists[m];});
+      return {id:pr.pilot.id,name:pr.pilot.name,seniority:pr.pilot.seniority,correlations:pr.corr,top1:pr.top1,top3:pr.top3,rankings:rankings};
+    }),
+    snapshots: comparisonStore.snapshots,
+  };
+  showExportModal('Comparison JSON',JSON.stringify(data,null,2),'comparison.json','json');
+}
+
+/* ══════════════════════════════════════════
+   RESULTS TAB — Visualisations
+══════════════════════════════════════════ */
+TAB_FNS['results'] = renderResults;
+
+function clearAllResults(){
+  if(!confirm('Clear all evaluation results? This resets all LLM scores, rankings, and allocation data.')) return;
+  _resetEvalState();
+  updateEvalProgress();
+  renderRoster('evalRoster','selectEvalPilot',activePilot.eval);
+  var chartsEl = document.getElementById('resultsCharts');
+  if(chartsEl) chartsEl.innerHTML = '<p style="font-size:12px;color:#888;font-family:monospace;padding:0.5rem">No results yet. Run an evaluation then click Refresh charts.</p>';
+}
+
+function _renderTimingBanner(){
+  var timingRows = [];
+  var modeInfo = [
+    {key:'rankall',  label:'Rank-All', color:'#2563eb'},
+    {key:'scoring',  label:'Scoring',  color:'#9333ea'},
+    {key:'pairwise', label:'Pairwise', color:'#16a34a'},
+  ];
+  modeInfo.forEach(function(m){
+    var t = _runTimings[m.key];
+    if(!t) return;
+    timingRows.push(
+      '<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-size:11px;font-family:monospace">'
+      +'<span style="color:'+m.color+';font-weight:500">'+m.label+'</span>'
+      +'<span style="color:#555">started '+_fmtTimestamp(t.startedAt)+'</span>'
+      +'<span style="color:#888">\u00b7</span>'
+      +'<span style="color:#1a1a1a">\u23f1 '+_fmtDuration(t.durationMs)+(t.stopped?' (stopped)':'')+'</span>'
+      +'</span>'
+    );
+  });
+  if(!timingRows.length) return '';
+  return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;padding:8px 12px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:4px">'
+    + timingRows.join('') + '</div>';
+}
+
+function renderResults(){
+  var el = document.getElementById('resultsCharts');
+  if(!el) return;
+  var hasRA = Object.keys(resultsStore.rankall).length > 0;
+  var hasSC = Object.keys(resultsStore.scoring).length > 0;
+  var hasPW = Object.keys(resultsStore.pairwise).length > 0;
+  var hasAlloc = Object.keys(_lastAlloc).length > 0 || Object.keys(_lastLineAlloc).length > 0;
+  if(!hasRA && !hasSC && !hasPW && !hasAlloc){
+    el.innerHTML = '<p style="font-size:12px;color:#888;font-family:monospace;padding:0.5rem">No results yet. Run an evaluation then click Refresh charts.</p>';
+    return;
+  }
+  var html = '';
+  html += _renderTimingBanner();
+  if(hasRA || hasSC || hasPW){
+    html += _renderSummaryDashboard();
+    html += _renderAggregatePanel();
+    html += _renderComparisonPanel();
+  }
+  html += _chartScatterOuter();
+  html += _chartAllocTable();
+  html += _chartBoxPlotOuter();
+  el.innerHTML = html;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   SUMMARY DASHBOARD — top-level metric cards per method
+────────────────────────────────────────────────────────────────────────── */
+function _renderSummaryDashboard(){
+  var hasAny = pilots.some(function(p){
+    return resultsStore.rankall[p.id]||resultsStore.scoring[p.id]||resultsStore.pairwise[p.id];
+  });
+  if(!hasAny) return '';
+
+  var computed = computeAllCorrelations();
+  var mColors  = {rankall:'#1d4ed8', scoring:'#7e22ce', pairwise:'#16a34a'};
+  var mLabels  = {rankall:'Rank-all', scoring:'Scoring', pairwise:'Pairwise'};
+  var llmMethods = ['rankall','scoring','pairwise'];
+  var aggW = computed.aggregate.within || {};
+
+  var availMethods = llmMethods.filter(function(m){
+    return computed.pilotResults.some(function(pr){ return pr.lists[m] !== null; });
+  });
+  if(!availMethods.length) return '';
+
+  // Top-1 and top-3 rates
+  var top1Rate = {}, top3Rate = {};
+  availMethods.forEach(function(m){
+    var valid = computed.pilotResults.filter(function(pr){ return pr.top1[m] !== null; });
+    top1Rate[m] = valid.length ? valid.filter(function(pr){ return pr.top1[m]; }).length / valid.length : null;
+    var v3 = computed.pilotResults.filter(function(pr){ return pr.top3[m] !== null; });
+    top3Rate[m] = v3.length ? v3.reduce(function(s,pr){ return s+pr.top3[m]; },0) / (v3.length*3) : null;
+  });
+
+  // Key-finding sentences
+  var oracleVals = availMethods.map(function(m){
+    var v = computed.aggregate['oracle_vs_'+m];
+    return {m:m, v:(v!==null&&v!==undefined)?v:null};
+  }).filter(function(x){ return x.v!==null; });
+  var withinVals = availMethods.map(function(m){
+    return {m:m, v:aggW[m]?aggW[m].mean_r1_r2:null};
+  }).filter(function(x){ return x.v!==null; });
+
+  var sentences = [];
+  if(oracleVals.length){
+    var bestO = oracleVals.reduce(function(a,b){ return a.v>=b.v?a:b; });
+    sentences.push(mLabels[bestO.m]+' is most aligned with oracle (avg ρ = '+bestO.v.toFixed(2)+').');
+  }
+  if(withinVals.length){
+    var bestW = withinVals.reduce(function(a,b){ return a.v>=b.v?a:b; });
+    var worstW = withinVals.reduce(function(a,b){ return a.v<=b.v?a:b; });
+    sentences.push(mLabels[bestW.m]+' is most run-consistent (ρ = '+bestW.v.toFixed(2)+')'
+      +(bestW.m!==worstW.m ? '; '+mLabels[worstW.m]+' has most variance (ρ = '+worstW.v.toFixed(2)+')':'')+'.');
+  }
+
+  var html = '<div class="card" style="margin-bottom:1.5rem;border-color:#0ea5e9">';
+  html += '<div class="card-title" style="color:#0369a1">Results Summary</div>';
+
+  // Method cards grid
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:12px;margin-bottom:14px">';
+  availMethods.forEach(function(m){
+    var rhoO   = computed.aggregate['oracle_vs_'+m];
+    var rhoW   = aggW[m] ? aggW[m].mean_r1_r2 : null;
+    var status = aggW[m] ? aggW[m].status : null;
+    var t1 = top1Rate[m], t3 = top3Rate[m];
+
+    var rhoOColor = (rhoO===null||rhoO===undefined)?'#94a3b8':rhoO>0.8?'#16a34a':rhoO>0.6?'#d97706':'#dc2626';
+    var rhoWColor = (rhoW===null)?'#94a3b8':rhoW>0.9?'#16a34a':rhoW>0.7?'#d97706':'#dc2626';
+
+    // Aggregate overall score: ρ (60 pts) + top-1 rate (25 pts).
+    // Eligibility accuracy (15 pts) is per-pilot only, so max here is 85.
+    var avgScore = (rhoO!==null&&rhoO!==undefined&&t1!==null)
+      ? Math.round(((rhoO+1)/2*60) + (t1*25)) : null;
+    var scoreBg = avgScore===null?'#f8fafc':avgScore>=75?'#f0fdf4':avgScore>=55?'#fffbeb':'#fef2f2';
+    var scoreFg = avgScore===null?'#94a3b8':avgScore>=75?'#16a34a':avgScore>=55?'#d97706':'#dc2626';
+
+    html += '<div style="border:1.5px solid '+mColors[m]+';border-radius:10px;padding:12px 14px">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+    html += '<div style="font-size:12px;font-weight:700;color:'+mColors[m]+';letter-spacing:0.02em">'+mLabels[m]+'</div>';
+    if(avgScore!==null){
+      html += '<div title="Overall score = (ρ+1)/2 \u00d7 60 pts + top-1 \u00d7 25 pts. (+15 from elig. accuracy on per-pilot cards; max here is 85.)" '
+        +'style="background:'+scoreBg+';color:'+scoreFg+';font-size:18px;font-weight:700;font-family:monospace;'
+        +'border-radius:7px;padding:2px 9px;cursor:default">'+avgScore+'</div>';
+    }
+    html += '</div>';
+
+    // Accuracy vs oracle
+    html += '<div style="margin-bottom:8px">';
+    html += '<div title="Spearman rank-correlation between this method\'s final ranking and the oracle\'s ranking, averaged across all pilots. Range: \u22121 (reversed) to 1 (perfect). Contributes up to 60 pts: (ρ+1)/2 \u00d7 60." style="font-size:8px;color:#9ca3af;font-family:monospace;letter-spacing:0.06em;margin-bottom:3px;cursor:default">ACCURACY VS ORACLE \u24d8</div>';
+    html += '<div style="display:flex;align-items:center;gap:6px">';
+    html += '<div style="flex:1;background:#f1f5f9;border-radius:3px;height:6px">';
+    if(rhoO!==null&&rhoO!==undefined){
+      html += '<div style="width:'+Math.max(0,Math.min(100,rhoO*100))+'%;background:'+rhoOColor+';height:100%;border-radius:3px"></div>';
+    }
+    html += '</div>';
+    html += '<span style="font-size:13px;font-weight:700;color:'+rhoOColor+';font-family:monospace;min-width:42px;text-align:right">';
+    html += (rhoO!==null&&rhoO!==undefined)?'ρ '+rhoO.toFixed(2):'—';
+    html += '</span></div></div>';
+
+    // Run consistency
+    html += '<div style="margin-bottom:10px">';
+    html += '<div title="Spearman \u03c1 between two independent runs on the same scenario. 1.0 = identical results. Stable \u2265 0.9. Diagnostic only \u2014 does not feed into the overall score." style="font-size:8px;color:#9ca3af;font-family:monospace;letter-spacing:0.06em;margin-bottom:3px;cursor:default">RUN CONSISTENCY \u24d8</div>';
+    html += '<div style="display:flex;align-items:center;gap:6px">';
+    html += '<div style="flex:1;background:#f1f5f9;border-radius:3px;height:6px">';
+    if(rhoW!==null){
+      html += '<div style="width:'+Math.max(0,Math.min(100,rhoW*100))+'%;background:'+rhoWColor+';height:100%;border-radius:3px"></div>';
+    }
+    html += '</div>';
+    html += '<span style="font-size:13px;font-weight:700;color:'+rhoWColor+';font-family:monospace;min-width:42px;text-align:right">';
+    html += (rhoW!==null)?'ρ '+rhoW.toFixed(2):'—';
+    html += '</span></div></div>';
+
+    // Top-1 / Top-3 / status
+    html += '<div style="display:flex;gap:14px;align-items:flex-end;padding-top:8px;border-top:1px solid #f1f5f9">';
+    html += '<div style="text-align:center" title="% of pilots where the method\'s #1 ranked item matches the oracle\'s #1. Worth 25 pts in the overall score.">';
+    html += '<div style="font-size:15px;font-weight:700;color:#374151;font-family:monospace;cursor:default">'+(t1!==null?Math.round(t1*100)+'%':'\u2014')+'</div>';
+    html += '<div style="font-size:8px;color:#9ca3af;letter-spacing:0.04em">TOP-1 \u24d8</div></div>';
+    html += '<div style="text-align:center" title="% of oracle\'s top-3 items appearing in the method\'s top-3, averaged across pilots. Diagnostic only \u2014 not in the overall score.">';
+    html += '<div style="font-size:15px;font-weight:700;color:#374151;font-family:monospace;cursor:default">'+(t3!==null?Math.round(t3*100)+'%':'\u2014')+'</div>';
+    html += '<div style="font-size:8px;color:#9ca3af;letter-spacing:0.04em">TOP-3 \u24d8</div></div>';
+    if(status){ html += '<div style="margin-left:auto">'+_statusPill(status)+'</div>'; }
+    html += '</div>';
+
+    // Score formula footnote
+    html += '<div style="font-size:8px;color:#cbd5e1;font-family:monospace;margin-top:7px;border-top:1px solid #f1f5f9;padding-top:5px">'
+      +'score\u202f=\u202f(ρ+1)/2\u202f\u00d7\u202f60\u202f+\u202ftop-1\u202f\u00d7\u202f25\u202f(+15 elig, per pilot)'
+      +'</div>';
+
+    html += '</div>'; // method card
+  });
+  html += '</div>'; // grid
+
+  // Key finding
+  if(sentences.length){
+    html += '<div style="padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:11px;color:#0369a1;font-family:monospace">';
+    html += sentences.join('  ');
+    html += '</div>';
+  }
+
+  html += '</div>'; // card
+  return html;
+}
+
+/* helper – pilots × methods heatmap table (accuracy or consistency) */
+function _renderHeatmapTable(computed, type, availMethods, mColors, mLabels){
+  var s = '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:10px;font-family:monospace;width:100%">';
+  s += '<tr style="border-bottom:1px solid #e2e8f0">';
+  s += '<th style="text-align:left;padding:3px 8px;color:#9ca3af;font-weight:400;font-size:9px"></th>';
+  availMethods.forEach(function(m){
+    s += '<th style="text-align:center;padding:3px 8px;color:'+mColors[m]+';font-weight:500;font-size:9px">'+mLabels[m]+'</th>';
+  });
+  s += '</tr>';
+  computed.pilotResults.forEach(function(pr){
+    s += '<tr style="border-bottom:1px solid #f8fafc">';
+    s += '<td style="padding:4px 8px;color:#374151;font-weight:500;white-space:nowrap">'+pr.pilot.name+'</td>';
+    availMethods.forEach(function(m){
+      var val = type==='accuracy'
+        ? pr.corr['oracle_vs_'+m]
+        : (pr.within[m] ? pr.within[m].r1_r2 : null);
+      if(val===null||val===undefined){
+        s += '<td style="text-align:center;padding:4px 8px;color:#d1d5db">—</td>';
+      } else {
+        var bg, fg;
+        if(val>0.8){bg='#dcfce7';fg='#15803d';}
+        else if(val>0.6){bg='#fef9c3';fg='#92400e';}
+        else if(val>0.4){bg='#ffedd5';fg='#9a3412';}
+        else{bg='#fee2e2';fg='#991b1b';}
+        s += '<td style="text-align:center;padding:4px 8px;background:'+bg+';color:'+fg+';font-weight:600">'+val.toFixed(2)+'</td>';
+      }
+    });
+    s += '</tr>';
+  });
+  s += '</table></div>';
+  return s;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   AGGREGATE PANEL — all pilots combined
+────────────────────────────────────────────────────────────────────────── */
+function _renderAggregatePanel(){
+  var hasAny = pilots.some(function(p){
+    return resultsStore.rankall[p.id]||resultsStore.scoring[p.id]||resultsStore.pairwise[p.id];
+  });
+  if(!hasAny) return '';
+
+  var computed = computeAllCorrelations();
+  var mColors = {oracle:'#374151',rankall:'#1d4ed8',scoring:'#7e22ce',pairwise:'#16a34a'};
+  var mLabels = {oracle:'Oracle',rankall:'Rank-all',scoring:'Scoring',pairwise:'Pairwise'};
+  var mKeys   = ['oracle','rankall','scoring','pairwise'];
+  var llmMethods = ['rankall','scoring','pairwise'];
+
+  var availMethods = llmMethods.filter(function(m){
+    return computed.pilotResults.some(function(pr){ return pr.lists[m]!==null; });
+  });
+
+  var html = '<div class="card" style="margin-bottom:1.5rem;border-color:#7c3aed">';
+  html += '<div class="card-title" style="color:#7c3aed">Cross-Pilot Analysis</div>';
+
+  if(availMethods.length){
+    /* Two heatmaps side by side */
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:16px">';
+
+    var colorKey = '<div style="font-size:9px;font-family:monospace;color:#6b7280;margin-bottom:6px;display:flex;gap:10px;flex-wrap:wrap">'
+      +'<span style="color:#15803d">&#9632; &ge;0.80 strong</span>'
+      +'<span style="color:#92400e">&#9632; 0.60&ndash;0.79 moderate</span>'
+      +'<span style="color:#9a3412">&#9632; 0.40&ndash;0.59 weak</span>'
+      +'<span style="color:#991b1b">&#9632; &lt;0.40 poor</span>'
+      +'</div>';
+
+    html += '<div>';
+    html += '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#6b7280;text-transform:uppercase;margin-bottom:3px">Accuracy vs Oracle</div>';
+    html += '<div style="font-size:10px;color:#6b7280;font-family:monospace;margin-bottom:4px">How well the LLM’s ranking order matched the oracle’s ground truth for each pilot. 1.0 = perfect match, 0 = no correlation, negative = reversed order. Uses Spearman&#39;s rho: both lists are converted to rank positions (1st, 2nd, 3rd) and the similarity of those orders is measured, so small and large score gaps count equally.</div>';
+    html += colorKey;
+    html += _renderHeatmapTable(computed,'accuracy',availMethods,mColors,mLabels);
+    html += '</div>';
+
+    html += '<div>';
+    html += '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#6b7280;text-transform:uppercase;margin-bottom:3px">Run Consistency</div>';
+    html += '<div style="font-size:10px;color:#6b7280;font-family:monospace;margin-bottom:4px">How similar the LLM’s rankings were across two independent runs for the same pilot. 1.0 = identical runs, lower = more random. Uses Spearman&#39;s rho on the rank positions produced by each run.</div>';
+    html += colorKey;
+    html += _renderHeatmapTable(computed,'consistency',availMethods,mColors,mLabels);
+    html += '</div>';
+
+    html += '</div>'; // grid
+
+    /* Between-method agreement matrix */
+    html += '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#6b7280;text-transform:uppercase;margin-bottom:3px">Method Agreement (avg across all pilots)</div>';
+    html += '<div style="font-size:10px;color:#6b7280;font-family:monospace;margin-bottom:6px">How much two methods agree on the ranking order of '+(lineMode?'lines':'pairings')+'. 1.0 = identical order, 0 = unrelated, negative = opposite order. Each cell uses each method&#39;s merged final result (averaged across all runs, not per-run data), then averaged across pilots. Uses Spearman&#39;s rho.</div>';
+    html += _betweenMatrix(null, mLabels, mColors, mKeys, computed.aggregate);
+
+    /* Ties footnote */
+    var oracleTiedTotals = computed.pilotResults.map(function(pr){ return pr.oracleTiedPairs||0; });
+    var scoringTiedTotals = computed.pilotResults.filter(function(pr){ return pr.scoringTiedGroups!==null; })
+                                                 .map(function(pr){ return pr.scoringTiedPairs||0; });
+    var oracleAvgTied = oracleTiedTotals.length
+      ? (oracleTiedTotals.reduce(function(s,v){return s+v;},0)/oracleTiedTotals.length).toFixed(1) : '0.0';
+    var scoringAvgTied = scoringTiedTotals.length
+      ? (scoringTiedTotals.reduce(function(s,v){return s+v;},0)/scoringTiedTotals.length).toFixed(1) : '0.0';
+    html += '<div style="font-size:9px;font-family:monospace;color:#94a3b8;margin-top:6px">';
+    html += 'Ties: Oracle avg '+oracleAvgTied+' per pilot  ·  Scoring avg '+scoringAvgTied+' per pilot';
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+/* — oracle rank map per pilot — */
+function _oracleMapForPilot(pilot){
+  var m = {}, idKey;
+  if(lineMode && lines.length){
+    oracleRankLines(pilot, lines).forEach(function(r){ m[r.line.id] = r.rank; });
+    idKey = 'lineId';
+  } else {
+    oracleRankPilot(pilot).forEach(function(r){ m[r.id] = r.oRank; });
+    idKey = 'pairingId';
+  }
+  return {m:m, idKey:idKey};
+}
+
+/* — Spearman rho from ranked list vs oracle map — */
+function _computeRho(rankedList, oMap, idKey){
+  var pairs = [];
+  rankedList.forEach(function(r){ var o=oMap[r[idKey]]; if(o!==undefined) pairs.push({l:r.rank,o:o}); });
+  var n = pairs.length; if(n<2) return null;
+  var lm=pairs.reduce(function(s,p){return s+p.l;},0)/n;
+  var om=pairs.reduce(function(s,p){return s+p.o;},0)/n;
+  var num=pairs.reduce(function(s,p){return s+(p.l-lm)*(p.o-om);},0);
+  var dl=Math.sqrt(pairs.reduce(function(s,p){return s+Math.pow(p.l-lm,2);},0));
+  var db=Math.sqrt(pairs.reduce(function(s,p){return s+Math.pow(p.o-om,2);},0));
+  return (dl&&db)?num/(dl*db):0;
+}
+
+/* — convert scoring result to rank list — */
+function _scoresToRanked(scoreResult, idKey){
+  if(!scoreResult||!scoreResult.length) return null;
+  var sorted=scoreResult.slice().sort(function(a,b){return b.score-a.score;});
+  return sorted.map(function(r,i){ var o={}; o[idKey]=r[idKey]; o.rank=i+1; return o; });
+}
+
+/* — convert pairwise final result to ranked list.
+     If the result already contains BT-derived rank/btStrength fields (from
+     adaptive auto-run), use them directly. Otherwise fall back to win-count
+     ranking (manual round-robin path). — */
+function _pwToRanked(pwFinal, idKey){
+  if(!pwFinal || !pwFinal.length) return null;
+  // BT path: result rows have .rank and .[idKey] set by _runAdaptivePairwisePilot
+  if(pwFinal[0] && pwFinal[0].rank !== undefined && pwFinal[0][idKey] !== undefined){
+    var out = pwFinal.slice().sort(function(a,b){return a.rank-b.rank;});
+    return out.map(function(r){ var o={}; o[idKey]=r[idKey]; o.rank=r.rank; return o; });
+  }
+  // Win-count fallback (manual / legacy round-robin)
+  var allItems=lineMode?lines:pairings;
+  var wins={};
+  allItems.forEach(function(it){ wins[it.id]=0; });
+  pwFinal.forEach(function(r){ if(r.llmWinner!==undefined&&wins[r.llmWinner]!==undefined) wins[r.llmWinner]++; });
+  var sorted=allItems.slice().sort(function(a,b){ var d=wins[b.id]-wins[a.id]; return d!==0?d:a.id-b.id; });
+  return sorted.map(function(it,i){ var o={}; o[idKey]=it.id; o.rank=i+1; return o; });
+}
+
+function _fmtDuration(ms){
+  if(ms===null||ms===undefined) return '—';
+  if(ms<1000) return ms+'ms';
+  var s=Math.round(ms/100)/10;
+  if(s<60) return s+'s';
+  var m=Math.floor(s/60), sec=Math.round(s%60);
+  return m+'m '+sec+'s';
+}
+
+function _fmtTimestamp(iso){
+  if(!iso) return '—';
+  try{
+    var d=new Date(iso);
+    return d.toLocaleDateString()+' '+d.toLocaleTimeString();
+  }catch(_){ return iso; }
+}
+
+/* ── CHART 0: Per-Run Consistency Table ── */
+function _chartRunsConsistency(){
+  var hasRA=Object.keys(resultsStore.rankall).length>0;
+  var hasSC=Object.keys(resultsStore.scoring).length>0;
+  var hasPW=Object.keys(resultsStore.pairwise).length>0;
+  if(!hasRA&&!hasSC&&!hasPW) return '';
+
+  var html='<div class="card" style="margin-bottom:1.5rem">';
+  html+='<div class="card-title">LLM Run-by-Run Consistency</div>';
+
+  /* ── timing banner ── */
+  var timingRows=[];
+  var modeInfo=[
+    {key:'rankall', label:'Rank-All', color:'#2563eb'},
+    {key:'scoring', label:'Scoring',  color:'#9333ea'},
+    {key:'pairwise',label:'Pairwise', color:'#16a34a'},
+  ];
+  modeInfo.forEach(function(m){
+    var t=_runTimings[m.key];
+    if(!t) return;
+    timingRows.push(
+      '<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-size:11px;font-family:monospace">'
+      +'<span style="color:'+m.color+';font-weight:500">'+m.label+'</span>'
+      +'<span style="color:#555">started '+_fmtTimestamp(t.startedAt)+'</span>'
+      +'<span style="color:#888">·</span>'
+      +'<span style="color:#1a1a1a">⏱ '+_fmtDuration(t.durationMs)+(t.stopped?' (stopped)':'')+'</span>'
+      +'</span>'
+    );
+  });
+  if(timingRows.length){
+    html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;padding:8px 12px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:4px">'
+      +timingRows.join('')+'</div>';
+  }
+  html+='<div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:14px">'
+    +'Each LLM call shown separately per pilot. ';
+  if(hasRA||hasSC){
+    html+='Rank/score cells colored vs oracle: '
+      +'<span style="padding:2px 6px;border-radius:3px;background:#f0fdf4;color:#16a34a">exact</span> '
+      +'<span style="padding:2px 6px;border-radius:3px;background:#fffbeb;color:#d97706">±1</span> '
+      +'<span style="padding:2px 6px;border-radius:3px;background:#fef2f2;color:#dc2626">±2+</span>. ';
+  }
+  if(hasSC){
+    html+='Score cells also shaded by cross-run spread: '
+      +'<span style="padding:2px 5px;border-radius:3px;background:#f0fdf4;color:#16a34a">&lt;5</span> '
+      +'<span style="padding:2px 5px;border-radius:3px;background:#fffbeb;color:#d97706">5–10</span> '
+      +'<span style="padding:2px 5px;border-radius:3px;background:#fef2f2;color:#dc2626">&gt;10</span>.';
+  }
+  html+='</div>';
+
+  pilots.forEach(function(pilot){
+    var raS=resultsStore.rankall[pilot.id];
+    var scS=resultsStore.scoring[pilot.id];
+    var pwS=resultsStore.pairwise[pilot.id];
+    if(!raS&&!scS&&!pwS) return;
+
+    var info=_oracleMapForPilot(pilot);
+    var oMap=info.m, idKey=info.idKey;
+    var allItemIds=lineMode?lines.map(function(l){return l.id;}):pairings.map(function(p){return p.id;});
+    var itemLabel=lineMode?'Line ':'P';
+    var consistencyPill=(raS&&raS.consistency?_consistencyPill(raS.consistency,'rankall'):'')
+      +(scS&&scS.consistency?_consistencyPill(scS.consistency,'scoring'):'')
+      +(pwS&&pwS.consistency?_consistencyPill(pwS.consistency,'pairwise'):'');
+
+    html+='<div style="margin-bottom:2rem">';
+    html+='<div style="font-size:12px;font-weight:500;margin-bottom:6px;color:#1a1a1a;display:flex;align-items:center;gap:8px">Capt. '+pilot.name+' <span>'+consistencyPill+'</span></div>';
+
+    var sortedIds=allItemIds.slice().sort(function(a,b){return (oMap[a]||999)-(oMap[b]||999);});
+
+    /* ── Rank-all ── */
+    if(raS&&raS.runs&&raS.runs.length){
+      var runMaps=raS.runs.map(function(run){
+        var m={}; run.result.forEach(function(r){ m[r[idKey]]=r.rank; }); return m;
+      });
+      var raFinalMap={};
+      if(raS.finalResult) raS.finalResult.forEach(function(r){ raFinalMap[r[idKey]]=r.rank; });
+      html+='<div style="font-size:10px;font-family:monospace;color:#2563eb;font-weight:500;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Rank-All</div>';
+      html+='<div style="overflow-x:auto;margin-bottom:14px"><table style="border-collapse:collapse;font-size:10px;font-family:monospace;white-space:nowrap">';
+      html+='<tr style="border-bottom:2px solid #e2e8f0">';
+      html+='<th style="text-align:left;padding:4px 10px;color:#888;font-weight:400">Item</th>';
+      html+='<th style="text-align:center;padding:4px 10px;color:#374151;font-weight:400">Oracle</th>';
+      raS.runs.forEach(function(_,ri){
+        html+='<th style="text-align:center;padding:4px 10px;color:#2563eb;font-weight:400">Run '+(ri+1)+'</th>';
+      });
+      if(raS.finalResult&&raS.runs.length>=2)
+        html+='<th style="text-align:center;padding:4px 10px;color:#1d4ed8;font-weight:500">Final</th>';
+      html+='</tr>';
+      sortedIds.forEach(function(id){
+        var oR=oMap[id];
+        html+='<tr style="border-bottom:1px solid #f8fafc">';
+        html+='<td style="padding:3px 10px;color:#555">'+itemLabel+id+'</td>';
+        html+='<td style="text-align:center;padding:3px 10px;background:#f8fafc;color:#374151">'+(oR!==undefined?oR:'—')+'</td>';
+        runMaps.forEach(function(rm){
+          var r=rm[id];
+          if(r===undefined){html+='<td style="text-align:center;padding:3px 10px;color:#e2e8f0">—</td>';return;}
+          var d=oR!==undefined?Math.abs(r-oR):null;
+          var bg=d===null?'':d===0?'#f0fdf4':d===1?'#fffbeb':'#fef2f2';
+          var fg=d===null?'#1a1a1a':d===0?'#16a34a':d===1?'#d97706':'#dc2626';
+          html+='<td style="text-align:center;padding:3px 10px;background:'+bg+';color:'+fg+'">'+r+'</td>';
+        });
+        if(raS.finalResult&&raS.runs.length>=2){
+          var fr=raFinalMap[id];
+          var fd=oR!==undefined&&fr!==undefined?Math.abs(fr-oR):null;
+          var fbg=fd===null?'':fd===0?'#f0fdf4':fd===1?'#fffbeb':'#fef2f2';
+          var ffg=fd===null?'#1a1a1a':fd===0?'#16a34a':fd===1?'#d97706':'#dc2626';
+          html+='<td style="text-align:center;padding:3px 10px;background:'+fbg+';color:'+ffg+';font-weight:500">'+(fr!==undefined?fr:'—')+'</td>';
+        }
+        html+='</tr>';
+      });
+      html+='</table></div>';
+    }
+
+    /* ── Scoring ── */
+    if(scS&&scS.runs&&scS.runs.length){
+      var scRunMaps=scS.runs.map(function(run){
+        var m={}; run.result.forEach(function(r){ m[r[idKey]]=r.score; }); return m;
+      });
+      var scFinalMap={};
+      if(scS.finalResult) scS.finalResult.forEach(function(r){ scFinalMap[r[idKey]]=r.score; });
+      html+='<div style="font-size:10px;font-family:monospace;color:#9333ea;font-weight:500;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Scoring</div>';
+      html+='<div style="overflow-x:auto;margin-bottom:14px"><table style="border-collapse:collapse;font-size:10px;font-family:monospace;white-space:nowrap">';
+      html+='<tr style="border-bottom:2px solid #e2e8f0">';
+      html+='<th style="text-align:left;padding:4px 10px;color:#888;font-weight:400">Item</th>';
+      html+='<th style="text-align:center;padding:4px 10px;color:#374151;font-weight:400">Oracle rank</th>';
+      scS.runs.forEach(function(_,ri){
+        html+='<th style="text-align:center;padding:4px 10px;color:#9333ea;font-weight:400">Run '+(ri+1)+' score</th>';
+      });
+      if(scS.finalResult&&scS.runs.length>=2)
+        html+='<th style="text-align:center;padding:4px 10px;color:#7e22ce;font-weight:500">Final score</th>';
+      html+='</tr>';
+      sortedIds.forEach(function(id){
+        var oR=oMap[id];
+        var allScores=scRunMaps.map(function(m){return m[id];}).filter(function(s){return s!==undefined;});
+        var spread=allScores.length>=2?Math.max.apply(null,allScores)-Math.min.apply(null,allScores):0;
+        html+='<tr style="border-bottom:1px solid #f8fafc">';
+        html+='<td style="padding:3px 10px;color:#555">'+itemLabel+id+'</td>';
+        html+='<td style="text-align:center;padding:3px 10px;background:#f8fafc;color:#374151">'+(oR!==undefined?oR:'—')+'</td>';
+        scRunMaps.forEach(function(rm){
+          var s=rm[id];
+          if(s===undefined){html+='<td style="text-align:center;padding:3px 10px;color:#e2e8f0">—</td>';return;}
+          var bg=allScores.length<2?'':spread<5?'#f0fdf4':spread<=10?'#fffbeb':'#fef2f2';
+          var fg=allScores.length<2?'#1a1a1a':spread<5?'#16a34a':spread<=10?'#d97706':'#dc2626';
+          html+='<td style="text-align:center;padding:3px 10px;background:'+bg+';color:'+fg+'">'+s+'</td>';
+        });
+        if(scS.finalResult&&scS.runs.length>=2){
+          var fs=scFinalMap[id];
+          html+='<td style="text-align:center;padding:3px 10px;background:#f5f3ff;color:#7e22ce;font-weight:500">'+(fs!==undefined?fs:'—')+'</td>';
+        }
+        html+='</tr>';
+      });
+      html+='</table></div>';
+    }
+
+    /* ── Pairwise ── */
+    if(pwS&&pwS.runs&&pwS.runs.length){
+      var pwRunMaps=pwS.runs.map(function(run){
+        var m={}; run.result.forEach(function(r){ m[r.idA+'-'+r.idB]=r.llmWinner; }); return m;
+      });
+      var _pwFqLabel='';
+      if(pwS.btFitQuality!==undefined&&pwS.btFitQuality!==null){
+        var _fqPct=Math.round(pwS.btFitQuality*100);
+        var _fqColor=pwS.btFitQuality>=0.85?'#16a34a':pwS.btFitQuality>=0.70?'#d97706':'#dc2626';
+        _pwFqLabel=' <span style="font-size:9px;background:#f0fdf4;color:'+_fqColor+';padding:1px 6px;border-radius:8px;font-weight:600">BT fit '+_fqPct+'%</span>';
+        var _totalPairs=pwS.runs[0].result.length;
+        var _eligible=lineMode?lines.filter(function(l){return lineQualified(pilot,l);}).length:pairings.filter(function(p){return pilot.qualifiedTypes.includes(p.aircraft);}).length;
+        var _fullRR=_eligible*(_eligible-1)/2;
+        _pwFqLabel+=' <span style="font-size:9px;color:#888;font-family:monospace">'+_totalPairs+' pairs (vs '+_fullRR+' full RR)</span>';
+      }
+      html+='<div style="font-size:10px;font-family:monospace;color:#16a34a;font-weight:500;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Pairwise (adaptive BT)'+_pwFqLabel+'</div>';
+      html+='<div style="overflow-x:auto;margin-bottom:14px"><table style="border-collapse:collapse;font-size:10px;font-family:monospace;white-space:nowrap">';
+      html+='<tr style="border-bottom:2px solid #e2e8f0">';
+      html+='<th style="text-align:left;padding:4px 10px;color:#888;font-weight:400">Pair</th>';
+      html+='<th style="text-align:center;padding:4px 10px;color:#374151;font-weight:400">Oracle</th>';
+      pwS.runs.forEach(function(_,ri){
+        html+='<th style="text-align:center;padding:4px 10px;color:#16a34a;font-weight:400">Run '+(ri+1)+'</th>';
+      });
+      html+='<th style="text-align:center;padding:4px 10px;color:#374151;font-weight:400">Agree?</th>';
+      html+='</tr>';
+      pwS.runs[0].result.forEach(function(pair){
+        var key=pair.idA+'-'+pair.idB;
+        var oWin=pair.oracleWinner;
+        var winners=pwRunMaps.map(function(m){return m[key];});
+        var allAgree=winners.length>0&&winners.every(function(w){return w===winners[0];});
+        var allCorrect=oWin?winners.every(function(w){return w===oWin;}):null;
+        html+='<tr style="border-bottom:1px solid #f8fafc">';
+        html+='<td style="padding:3px 10px;color:#555">'+itemLabel+pair.idA+' vs '+itemLabel+pair.idB+'</td>';
+        html+='<td style="text-align:center;padding:3px 10px;background:#f8fafc;color:#374151">'+(oWin?itemLabel+oWin:'—')+'</td>';
+        winners.forEach(function(w){
+          if(w===undefined||w===null){html+='<td style="text-align:center;padding:3px 10px;color:#e2e8f0">—</td>';return;}
+          var matchO=oWin?w===oWin:null;
+          var bg=matchO===null?'':matchO?'#f0fdf4':'#fef2f2';
+          var fg=matchO===null?'#1a1a1a':matchO?'#16a34a':'#dc2626';
+          html+='<td style="text-align:center;padding:3px 10px;background:'+bg+';color:'+fg+'">'+itemLabel+w+'</td>';
+        });
+        var agBg=allAgree?(allCorrect===false?'#fffbeb':allCorrect?'#f0fdf4':'#f8fafc'):'#fef2f2';
+        var agFg=allAgree?(allCorrect===false?'#d97706':allCorrect?'#16a34a':'#555'):'#dc2626';
+        var agText=allAgree?(allCorrect===false?'✓ (wrong)':allCorrect?'✓':'✓'):'✗';
+        html+='<td style="text-align:center;padding:3px 10px;background:'+agBg+';color:'+agFg+'">'+agText+'</td>';
+        html+='</tr>';
+      });
+      html+='</table></div>';
+    }
+
+    html+='</div>';
+  });
+
+  html+='</div>';
+  return html;
+}
+
+/* ── CHART 1: Rank Agreement Heatmap ── */
+function _chartHeatmap(){
+  var hasRA=Object.keys(resultsStore.rankall).length>0;
+  var hasSC=Object.keys(resultsStore.scoring).length>0;
+  var hasPW=Object.keys(resultsStore.pairwise).length>0;
+  if(!hasRA&&!hasSC&&!hasPW) return '';
+
+  var html='<div class="card" style="margin-bottom:1.5rem">';
+  html+='<div class="card-title">Chart 1 — Rank Agreement Heatmap</div>';
+  html+='<div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:12px">Per-item rank across methods vs oracle. '
+    +'<span style="padding:2px 6px;border-radius:3px;background:#f0fdf4;color:#16a34a">exact</span> '
+    +'<span style="padding:2px 6px;border-radius:3px;background:#fffbeb;color:#d97706">±1</span> '
+    +'<span style="padding:2px 6px;border-radius:3px;background:#fef2f2;color:#dc2626">±2+</span></div>';
+
+  pilots.forEach(function(pilot){
+    var raS=resultsStore.rankall[pilot.id];
+    var scS=resultsStore.scoring[pilot.id];
+    var pwS=resultsStore.pairwise[pilot.id];
+    if(!raS&&!scS&&!pwS) return;
+    var info=_oracleMapForPilot(pilot);
+    var oMap=info.m, idKey=info.idKey;
+    var allItemIds=lineMode?lines.map(function(l){return l.id;}):pairings.map(function(p){return p.id;});
+    var itemLabel=lineMode?'Line ':'P';
+    var colDefs=[{label:'Oracle',map:oMap,color:'#374151'}];
+    if(raS&&raS.finalResult){
+      var raf={}; raS.finalResult.forEach(function(r){ raf[r[idKey]]=r.rank; });
+      colDefs.push({label:'Rank-All (final)',map:raf,color:'#1d4ed8'});
+    }
+    if(scS&&scS.finalResult){
+      var scf={}; scS.finalResult.slice().sort(function(a,b){return b.score-a.score;}).forEach(function(r,i){ scf[r[idKey]]=i+1; });
+      colDefs.push({label:'Scoring (final)',map:scf,color:'#7e22ce'});
+    }
+    if(pwS&&pwS.finalResult){
+      var pwR=_pwToRanked(pwS.finalResult,idKey);
+      if(pwR){ var pwm={}; pwR.forEach(function(r){pwm[r[idKey]]=r.rank;}); colDefs.push({label:'Pairwise (final)',map:pwm,color:'#16a34a'}); }
+    }
+    var sortedIds=allItemIds.slice().sort(function(a,b){return (oMap[a]||999)-(oMap[b]||999);});
+    if(sortedIds.length>20) sortedIds=sortedIds.slice(0,20);
+    html+='<div style="margin-bottom:1.5rem"><div style="font-size:12px;font-weight:500;margin-bottom:6px;color:#1a1a1a">Capt. '+pilot.name+'</div>';
+    html+='<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:10px;font-family:monospace;white-space:nowrap">';
+    html+='<tr style="border-bottom:2px solid #e2e8f0"><th style="text-align:left;padding:4px 8px;color:#888;font-weight:400">Item</th>';
+    colDefs.forEach(function(c){ html+='<th style="text-align:center;padding:4px 8px;color:'+c.color+';font-weight:400">'+c.label+'</th>'; });
+    html+='</tr>';
+    sortedIds.forEach(function(id){
+      var oRank=oMap[id];
+      html+='<tr style="border-bottom:1px solid #f8fafc"><td style="padding:3px 8px;color:#555">'+itemLabel+id+'</td>';
+      colDefs.forEach(function(c,ci){
+        var rank=c.map[id];
+        if(rank===undefined){ html+='<td style="text-align:center;padding:3px 8px;color:#e2e8f0">—</td>'; return; }
+        var diff=oRank!==undefined?Math.abs(rank-oRank):null;
+        var bg=ci===0?'#f8fafc':diff===0?'#f0fdf4':diff===1?'#fffbeb':'#fef2f2';
+        var fg=ci===0?'#374151':diff===0?'#16a34a':diff===1?'#d97706':'#dc2626';
+        html+='<td style="text-align:center;padding:3px 8px;background:'+bg+';color:'+fg+'">'+rank+'</td>';
+      });
+      html+='</tr>';
+    });
+    html+='</table></div></div>';
+  });
+  html+='</div>';
+  return html;
+}
+
+/* ── CHART 2: Spearman rho Horizontal Bar Chart ── */
+function _chartRhoBar(){
+  var hasRA=Object.keys(resultsStore.rankall).length>0;
+  var hasSC=Object.keys(resultsStore.scoring).length>0;
+  var hasPW=Object.keys(resultsStore.pairwise).length>0;
+  if(!hasRA&&!hasSC&&!hasPW) return '';
+
+  var W=500, PAD_L=140, PAD_R=90, PAD_T=14, ROW_H=18, GROUP_GAP=12;
+  var barZone=W-PAD_L-PAD_R, midX=PAD_L+barZone/2;
+  var methods=[
+    {key:'raRho',color:'#2563eb',label:'Rank-all'},
+    {key:'scRho',color:'#9333ea',label:'Scoring'},
+    {key:'pwRho',color:'#16a34a',label:'Pairwise'}
+  ];
+  var rows=[];
+  pilots.forEach(function(pilot){
+    var info=_oracleMapForPilot(pilot);
+    var oMap=info.m, idKey=info.idKey;
+    var raS=resultsStore.rankall[pilot.id];
+    var scS=resultsStore.scoring[pilot.id];
+    var pwS=resultsStore.pairwise[pilot.id];
+    var raRho=raS&&raS.finalResult?_computeRho(raS.finalResult,oMap,idKey):null;
+    var scRanked=scS&&scS.finalResult?_scoresToRanked(scS.finalResult,idKey):null;
+    var scRho=scRanked?_computeRho(scRanked,oMap,idKey):null;
+    var pwRanked=pwS&&pwS.finalResult?_pwToRanked(pwS.finalResult,idKey):null;
+    var pwRho=pwRanked?_computeRho(pwRanked,oMap,idKey):null;
+    rows.push({pilot:pilot,raRho:raRho,scRho:scRho,pwRho:pwRho});
+  });
+
+  var totalH=PAD_T+rows.length*(ROW_H*3+GROUP_GAP)+20;
+  var svg='<svg width="'+W+'" height="'+totalH+'" xmlns="http://www.w3.org/2000/svg">';
+  svg+='<line x1="'+midX+'" y1="'+PAD_T+'" x2="'+midX+'" y2="'+(totalH-16)+'" stroke="#e2e8f0" stroke-width="1"/>';
+  svg+='<text x="'+PAD_L+'" y="'+(totalH-4)+'" font-size="9" font-family="monospace" fill="#bbb" text-anchor="middle">−1</text>';
+  svg+='<text x="'+midX+'" y="'+(totalH-4)+'" font-size="9" font-family="monospace" fill="#bbb" text-anchor="middle">0</text>';
+  svg+='<text x="'+(PAD_L+barZone)+'" y="'+(totalH-4)+'" font-size="9" font-family="monospace" fill="#bbb" text-anchor="middle">+1</text>';
+
+  rows.forEach(function(row,ri){
+    var groupY=PAD_T+ri*(ROW_H*3+GROUP_GAP);
+    svg+='<text x="'+(PAD_L-5)+'" y="'+(groupY+ROW_H*1.5)+'" font-size="10" font-family="monospace" fill="#374151" text-anchor="end">Capt. '+row.pilot.name+'</text>';
+    methods.forEach(function(m,mi){
+      var rho=row[m.key];
+      var y=groupY+mi*ROW_H;
+      if(ri===0) svg+='<text x="'+(PAD_L+barZone+PAD_R-4)+'" y="'+(y+ROW_H*0.78)+'" font-size="9" font-family="monospace" fill="'+m.color+'" text-anchor="end">'+m.label+'</text>';
+      if(rho===null){ svg+='<text x="'+(midX+4)+'" y="'+(y+ROW_H*0.78)+'" font-size="9" font-family="monospace" fill="#e2e8f0">—</text>'; return; }
+      var clamped=Math.max(-1,Math.min(1,rho));
+      var barLen=Math.abs(clamped)*barZone/2;
+      var barX=clamped>=0?midX:midX-barLen;
+      svg+='<rect x="'+barX+'" y="'+(y+3)+'" width="'+barLen+'" height="'+(ROW_H-6)+'" fill="'+m.color+'" opacity="0.75" rx="2"/>';
+      var lblX=clamped>=0?midX+barLen+3:midX-barLen-3;
+      var anchor=clamped>=0?'start':'end';
+      svg+='<text x="'+lblX+'" y="'+(y+ROW_H*0.78)+'" font-size="9" font-family="monospace" fill="'+m.color+'" text-anchor="'+anchor+'">'+(clamped>=0?'+':'')+clamped.toFixed(2)+'</text>';
+    });
+  });
+  svg+='</svg>';
+
+  var html='<div class="card" style="margin-bottom:1.5rem">';
+  html+='<div class="card-title">Chart 2 — Spearman ρ vs Oracle</div>';
+  html+='<div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:10px">Rank correlation per pilot per method. +1=perfect, 0=none, −1=reversed.</div>';
+  html+='<div style="overflow-x:auto">'+svg+'</div>';
+  html+='<div style="display:flex;gap:16px;margin-top:8px;font-size:10px;font-family:monospace">';
+  html+='<span style="color:#2563eb">■ Rank-all</span><span style="color:#9333ea">■ Scoring</span><span style="color:#16a34a">■ Pairwise</span>';
+  html+='</div></div>';
+  return html;
+}
+
+/* ── CHART 3: Scoring Stability Scatter ── */
+function _chartScatterOuter(){
+  var hasSC=Object.keys(resultsStore.scoring).length>0;
+  if(!hasSC) return '';
+  var html='<div class="card" style="margin-bottom:1.5rem">';
+  html+='<div class="card-title">Chart 3 — Scoring Stability Scatter (Run 1 vs Run 2)</div>';
+  html+='<div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:10px">'
+    +'Each dot is one item. X=Run 1 score, Y=Run 2 score. Dashed diagonal=perfect consistency. '
+    +'<span style="color:#16a34a">●</span> Δ&lt;5 '
+    +'<span style="color:#d97706">●</span> Δ5–10 '
+    +'<span style="color:#dc2626">●</span> Δ&gt;10</div>';
+  html+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">';
+  html+='<label style="font-size:11px;font-family:monospace;color:#555">Pilot:</label>';
+  html+='<select id="scatterPilotSel" onchange="refreshScoringScatter()" style="font-family:monospace;font-size:11px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px">';
+  pilots.forEach(function(p){ if(resultsStore.scoring[p.id]) html+='<option value="'+p.id+'">Capt. '+p.name+'</option>'; });
+  html+='</select></div>';
+  html+='<div id="scatterSvgContainer">';
+  var firstPid=null;
+  for(var i=0;i<pilots.length;i++){ if(resultsStore.scoring[pilots[i].id]){ firstPid=pilots[i].id; break; } }
+  if(firstPid!==null) html+=_buildScatterSvg(firstPid);
+  html+='</div></div>';
+  return html;
+}
+
+function refreshScoringScatter(){
+  var sel=document.getElementById('scatterPilotSel');
+  if(!sel) return;
+  var el=document.getElementById('scatterSvgContainer');
+  if(el) el.innerHTML=_buildScatterSvg(parseInt(sel.value,10));
+}
+
+function _buildScatterSvg(pilotId){
+  var scS=resultsStore.scoring[pilotId];
+  if(!scS||!scS.runs||scS.runs.length<2)
+    return '<p style="font-size:12px;color:#888;font-family:monospace">Need at least 2 scoring runs for this pilot.</p>';
+  var run1=scS.runs[0].result, run2=scS.runs[1].result;
+  if(!run1||!run2) return '';
+  var idKey=(run1[0]&&run1[0].pairingId!==undefined)?'pairingId':'lineId';
+  var map2={};
+  run2.forEach(function(r){ map2[r[idKey]]=r.score; });
+  var W=310,H=310,PAD=44;
+  var plotW=W-PAD*2, plotH=H-PAD*2;
+  function sx(s){return PAD+s/100*plotW;}
+  function sy(s){return H-PAD-s/100*plotH;}
+  var svg='<svg width="'+W+'" height="'+H+'" xmlns="http://www.w3.org/2000/svg" style="background:#f8fafc;border-radius:8px;display:block">';
+  svg+='<line x1="'+PAD+'" y1="'+(H-PAD)+'" x2="'+(W-PAD)+'" y2="'+PAD+'" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>';
+  svg+='<line x1="'+PAD+'" y1="'+(H-PAD)+'" x2="'+(W-PAD)+'" y2="'+(H-PAD)+'" stroke="#94a3b8" stroke-width="1"/>';
+  svg+='<line x1="'+PAD+'" y1="'+PAD+'" x2="'+PAD+'" y2="'+(H-PAD)+'" stroke="#94a3b8" stroke-width="1"/>';
+  svg+='<text x="'+(W/2)+'" y="'+(H-4)+'" font-size="10" font-family="monospace" fill="#888" text-anchor="middle">Run 1 score</text>';
+  svg+='<text x="12" y="'+(H/2)+'" font-size="10" font-family="monospace" fill="#888" text-anchor="middle" transform="rotate(-90,12,'+(H/2)+')">Run 2 score</text>';
+  [0,25,50,75,100].forEach(function(v){
+    svg+='<text x="'+sx(v)+'" y="'+(H-PAD+12)+'" font-size="9" font-family="monospace" fill="#bbb" text-anchor="middle">'+v+'</text>';
+    svg+='<text x="'+(PAD-6)+'" y="'+(sy(v)+4)+'" font-size="9" font-family="monospace" fill="#bbb" text-anchor="end">'+v+'</text>';
+  });
+  run1.forEach(function(r){
+    var s2=map2[r[idKey]];
+    if(s2===undefined) return;
+    var diff=Math.abs(r.score-s2);
+    var color=diff<5?'#16a34a':diff<=10?'#d97706':'#dc2626';
+    var lbl=(idKey==='lineId'?'Line ':'P')+r[idKey];
+    svg+='<circle cx="'+sx(r.score)+'" cy="'+sy(s2)+'" r="4" fill="'+color+'" fill-opacity="0.75" stroke="'+color+'" stroke-width="0.5">';
+    svg+='<title>'+lbl+' R1:'+r.score+' R2:'+s2+' Δ='+diff+'</title>';
+    svg+='</circle>';
+  });
+  svg+='</svg>';
+  return svg;
+}
+
+/* ── CHART 4: Allocation Outcome Table ── */
+function _chartAllocTable(){
+  var hasPA=Object.keys(_lastAlloc).length>0;
+  var hasLA=Object.keys(_lastLineAlloc).length>0;
+  if(!hasPA&&!hasLA) return '';
+  var isLine=lineMode&&hasLA;
+  var alloc=isLine?_lastLineAlloc:_lastAlloc;
+  var hasOracle=!!(alloc.oracle);
+  var hasLlm=!!(alloc.llm);
+  if(!hasOracle&&!hasLlm) return '';
+  var html='<div class="card" style="margin-bottom:1.5rem">';
+  html+='<div class="card-title">Chart 4 — Allocation Outcome Comparison</div>';
+  html+='<div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:10px">'
+    +'Seniority-order allocation. '
+    +'<span style="color:#16a34a">✓</span>=oracle match &nbsp;'
+    +'<span style="color:#dc2626">✗</span>=differs from oracle.</div>';
+  var ordered=pilots.slice().sort(function(a,b){return a.seniority-b.seniority;});
+  html+='<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11px;font-family:monospace;width:100%">';
+  html+='<tr style="border-bottom:2px solid #e2e8f0">';
+  html+='<th style="text-align:left;padding:6px 10px;color:#888;font-weight:400">Seniority</th>';
+  html+='<th style="text-align:left;padding:6px 10px;color:#888;font-weight:400">Pilot</th>';
+  if(hasOracle) html+='<th style="text-align:center;padding:6px 10px;color:#374151;font-weight:400">Oracle</th>';
+  if(hasLlm)   html+='<th style="text-align:center;padding:6px 10px;color:#2563eb;font-weight:400">LLM</th>';
+  html+='</tr>';
+  ordered.forEach(function(p){
+    var oId=null, lId=null;
+    if(isLine){
+      var oa=alloc.oracle&&alloc.oracle.awardedLine&&alloc.oracle.awardedLine[p.id];
+      var la=alloc.llm&&alloc.llm.awardedLine&&alloc.llm.awardedLine[p.id];
+      oId=oa&&oa.line?oa.line.id:null;
+      lId=la&&la.line?la.line.id:null;
+    } else {
+      var oa2=alloc.oracle&&alloc.oracle.awarded&&alloc.oracle.awarded[p.id];
+      var la2=alloc.llm&&alloc.llm.awarded&&alloc.llm.awarded[p.id];
+      oId=oa2?oa2.id:null;
+      lId=la2?la2.id:null;
+    }
+    var same=oId!==null&&lId!==null&&oId===lId;
+    var match=hasOracle&&hasLlm;
+    html+='<tr style="border-bottom:1px solid #f1f5f9">';
+    html+='<td style="padding:6px 10px;color:#888">#'+p.seniority+'</td>';
+    html+='<td style="padding:6px 10px;color:#1a1a1a">Capt. '+p.name+'</td>';
+    if(hasOracle){
+      var oLbl=oId!==null?(isLine?'Line ':'P')+oId:'—';
+      html+='<td style="text-align:center;padding:6px 10px;font-weight:500">'+oLbl+'</td>';
+    }
+    if(hasLlm){
+      var lLbl=lId!==null?(isLine?'Line ':'P')+lId:'—';
+      var lColor=match?(same?'#16a34a':'#dc2626'):'#1a1a1a';
+      var lIcon=match?(same?' ✓':' ✗'):'';
+      html+='<td style="text-align:center;padding:6px 10px;font-weight:500;color:'+lColor+'">'+lLbl+lIcon+'</td>';
+    }
+    html+='</tr>';
+  });
+  if(hasOracle&&hasLlm){
+    var matches=ordered.filter(function(p){
+      var oi,li;
+      if(isLine){
+        oi=alloc.oracle&&alloc.oracle.awardedLine&&alloc.oracle.awardedLine[p.id];
+        li=alloc.llm&&alloc.llm.awardedLine&&alloc.llm.awardedLine[p.id];
+        return oi&&li&&oi.line&&li.line&&oi.line.id===li.line.id;
+      }
+      oi=alloc.oracle&&alloc.oracle.awarded&&alloc.oracle.awarded[p.id];
+      li=alloc.llm&&alloc.llm.awarded&&alloc.llm.awarded[p.id];
+      return oi&&li&&oi.id===li.id;
+    }).length;
+    html+='<tr style="background:#f8fafc"><td colspan="4" style="padding:6px 10px;font-size:10px;color:#555">';
+    html+='Agreement: '+matches+'/'+ordered.length+' pilots awarded same '+(isLine?'line':'pairing')+' under both methods.';
+    html+='</td></tr>';
+  }
+  html+='</table></div></div>';
+  return html;
+}
+
+/* ── CHART 5: Score Distribution Box Plot ── */
+function _chartBoxPlotOuter(){
+  var hasSC=Object.keys(resultsStore.scoring).length>0;
+  if(!hasSC) return '';
+  var html='<div class="card" style="margin-bottom:1.5rem">';
+  html+='<div class="card-title">Chart 5 — Scoring Distribution per Run</div>';
+  html+='<div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:10px">'
+    +'Score distribution across items per run. Box=IQR, whiskers=min/max, line=median.</div>';
+  html+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">';
+  html+='<label style="font-size:11px;font-family:monospace;color:#555">Pilot:</label>';
+  html+='<select id="boxPilotSel" onchange="refreshBoxPlot()" style="font-family:monospace;font-size:11px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px">';
+  pilots.forEach(function(p){ if(resultsStore.scoring[p.id]) html+='<option value="'+p.id+'">Capt. '+p.name+'</option>'; });
+  html+='</select></div>';
+  html+='<div id="boxPlotContainer">';
+  var firstPid=null;
+  for(var i=0;i<pilots.length;i++){ if(resultsStore.scoring[pilots[i].id]){ firstPid=pilots[i].id; break; } }
+  if(firstPid!==null) html+=_buildBoxPlotSvg(firstPid);
+  html+='</div></div>';
+  return html;
+}
+
+function refreshBoxPlot(){
+  var sel=document.getElementById('boxPilotSel');
+  if(!sel) return;
+  var el=document.getElementById('boxPlotContainer');
+  if(el) el.innerHTML=_buildBoxPlotSvg(parseInt(sel.value,10));
+}
+
+function _quartiles(arr){
+  var sorted=arr.slice().sort(function(a,b){return a-b;}), n=sorted.length;
+  if(!n) return null;
+  return {min:sorted[0],q1:sorted[Math.floor(n*0.25)],median:sorted[Math.floor(n*0.5)],q3:sorted[Math.floor(n*0.75)],max:sorted[n-1]};
+}
+
+function _buildBoxPlotSvg(pilotId){
+  var scS=resultsStore.scoring[pilotId];
+  if(!scS||!scS.runs||!scS.runs.length)
+    return '<p style="font-size:12px;color:#888;font-family:monospace">No scoring data for this pilot.</p>';
+  var boxes=[], colors=['#2563eb','#9333ea','#16a34a','#d97706'];
+  scS.runs.forEach(function(r,i){
+    var q=_quartiles(r.result.map(function(x){return x.score;}));
+    if(q) boxes.push({label:'Run '+(i+1),q:q,color:colors[i]||'#888'});
+  });
+  if(scS.finalResult&&scS.runs.length>=2){
+    var q=_quartiles(scS.finalResult.map(function(x){return x.score;}));
+    if(q) boxes.push({label:'Merged',q:q,color:'#0f766e'});
+  }
+  if(!boxes.length) return '<p style="font-size:12px;color:#888">No data.</p>';
+  var W=320,H=260,PAD_T=20,PAD_B=30,PAD_L=36,PAD_R=20;
+  var plotH=H-PAD_T-PAD_B;
+  var xStep=(W-PAD_L-PAD_R)/boxes.length, boxW=Math.min(36,xStep*0.5);
+  function sy(s){return H-PAD_B-s/100*plotH;}
+  var svg='<svg width="'+W+'" height="'+H+'" xmlns="http://www.w3.org/2000/svg" style="background:#f8fafc;border-radius:8px;display:block">';
+  svg+='<line x1="'+PAD_L+'" y1="'+PAD_T+'" x2="'+PAD_L+'" y2="'+(H-PAD_B)+'" stroke="#94a3b8" stroke-width="1"/>';
+  [0,25,50,75,100].forEach(function(v){
+    var vy=sy(v);
+    svg+='<line x1="'+(PAD_L-3)+'" y1="'+vy+'" x2="'+PAD_L+'" y2="'+vy+'" stroke="#94a3b8" stroke-width="1"/>';
+    svg+='<text x="'+(PAD_L-5)+'" y="'+(vy+4)+'" font-size="9" font-family="monospace" fill="#888" text-anchor="end">'+v+'</text>';
+    if(v>0) svg+='<line x1="'+PAD_L+'" y1="'+vy+'" x2="'+(W-PAD_R)+'" y2="'+vy+'" stroke="#f1f5f9" stroke-width="1"/>';
+  });
+  boxes.forEach(function(box,i){
+    var cx=PAD_L+xStep*i+xStep/2, q=box.q, c=box.color;
+    svg+='<line x1="'+cx+'" y1="'+sy(q.max)+'" x2="'+cx+'" y2="'+sy(q.min)+'" stroke="'+c+'" stroke-width="1" stroke-dasharray="3,2"/>';
+    var boxTop=sy(q.q3), boxBot=sy(q.q1);
+    svg+='<rect x="'+(cx-boxW/2)+'" y="'+boxTop+'" width="'+boxW+'" height="'+(boxBot-boxTop)+'" fill="'+c+'" fill-opacity="0.2" stroke="'+c+'" stroke-width="1.5" rx="2"/>';
+    svg+='<line x1="'+(cx-boxW/2)+'" y1="'+sy(q.median)+'" x2="'+(cx+boxW/2)+'" y2="'+sy(q.median)+'" stroke="'+c+'" stroke-width="2"/>';
+    svg+='<line x1="'+(cx-boxW/3)+'" y1="'+sy(q.max)+'" x2="'+(cx+boxW/3)+'" y2="'+sy(q.max)+'" stroke="'+c+'" stroke-width="1.5"/>';
+    svg+='<line x1="'+(cx-boxW/3)+'" y1="'+sy(q.min)+'" x2="'+(cx+boxW/3)+'" y2="'+sy(q.min)+'" stroke="'+c+'" stroke-width="1.5"/>';
+    svg+='<text x="'+cx+'" y="'+(H-PAD_B+14)+'" font-size="9" font-family="monospace" fill="#555" text-anchor="middle">'+box.label+'</text>';
+  });
+  svg+='</svg>';
+  return svg;
+}
+
+/* ── CSV Exports ── */
+function exportRankingsCsv(){
+  var hasRA=Object.keys(resultsStore.rankall).length>0;
+  var hasPW=Object.keys(resultsStore.pairwise).length>0;
+  if(!hasRA&&!hasPW){ alert('No ranking data yet. Run Compare all at once or Pairwise evaluation first.'); return; }
+  var idKey=lineMode?'lineId':'pairingId';
+  var unitLabel=lineMode?'Line':'Pairing';
+  var rows=[['Pilot','Method','Run',unitLabel,'LLMRank','OracleRank','RankDiff','Eligible','ShortReason']];
+  pilots.forEach(function(p){
+    var info=_oracleMapForPilot(p); var oMap=info.m;
+    var raS=resultsStore.rankall[p.id];
+    if(raS){
+      raS.runs.forEach(function(run){
+        run.result.forEach(function(r){
+          var or_=oMap[r[idKey]]||''; var diff=or_!==''?Math.abs(r.rank-or_):'';
+          rows.push([p.name,'RankAll',run.runIdx,r[idKey],r.rank,or_,diff,r.eligible?1:0,r.shortReason||'']);
+        });
+      });
+      if(raS.finalResult) raS.finalResult.forEach(function(r){
+        var or_=oMap[r[idKey]]||''; var diff=or_!==''?Math.abs(r.rank-or_):'';
+        rows.push([p.name,'RankAll','merged',r[idKey],r.rank,or_,diff,r.eligible?1:0,r.shortReason||'']);
+      });
+    }
+    var pwS=resultsStore.pairwise[p.id];
+    if(pwS&&pwS.finalResult){
+      var ranked=_pwToRanked(pwS.finalResult,idKey);
+      if(ranked) ranked.forEach(function(r){
+        var or_=oMap[r[idKey]]||''; var diff=or_!==''?Math.abs(r.rank-or_):'';
+        rows.push([p.name,'Pairwise','merged',r[idKey],r.rank,or_,diff,'','']);
+      });
+    }
+  });
+  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  showExportModal('Rankings CSV',csv,'pilot_rankings.csv','csv');
+}
+
+function exportScoresCsv(){
+  var hasSC=Object.keys(resultsStore.scoring).length>0;
+  if(!hasSC){ alert('No scoring data yet. Run Scoring mode first.'); return; }
+  var idKey=lineMode?'lineId':'pairingId';
+  var unitLabel=lineMode?'Line':'Pairing';
+  var rows=[['Pilot','Run',unitLabel,'Score','OracleRank','Eligible','ShortReason']];
+  pilots.forEach(function(p){
+    var scS=resultsStore.scoring[p.id]; if(!scS) return;
+    var info=_oracleMapForPilot(p); var oMap=info.m;
+    scS.runs.forEach(function(run){
+      run.result.forEach(function(r){
+        rows.push([p.name,run.runIdx,r[idKey],r.score,oMap[r[idKey]]||'',r.eligible?1:0,r.shortReason||'']);
+      });
+    });
+    if(scS.finalResult) scS.finalResult.forEach(function(r){
+      rows.push([p.name,'merged',r[idKey],r.score,oMap[r[idKey]]||'',r.eligible?1:0,r.shortReason||'']);
+    });
+  });
+  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  showExportModal('Scores CSV',csv,'pilot_scores.csv','csv');
+}
+
+function exportMetricsCsv(){
+  var rows=[['Pilot','Seniority','Method','Rho_vs_Oracle','Run1vsRun2_Spearman','ConsistencyStatus','RunsUsed','Top1Match']];
+  pilots.forEach(function(p){
+    var info=_oracleMapForPilot(p); var oMap=info.m, idKey=info.idKey;
+    var raS=resultsStore.rankall[p.id];
+    var scS=resultsStore.scoring[p.id];
+    var pwS=resultsStore.pairwise[p.id];
+    if(raS&&raS.finalResult){
+      var rho=_computeRho(raS.finalResult,oMap,idKey);
+      var wr=_withinMethodRho(raS,'rankall');
+      var top1=raS.finalResult[0]&&oMap[raS.finalResult[0][idKey]]===1?1:0;
+      rows.push([p.name,p.seniority,'RankAll',
+        rho!==null?rho.toFixed(3):'',
+        wr?wr.r1_r2:'', wr?wr.status:'', raS.runs.length, top1]);
+    }
+    if(scS&&scS.finalResult){
+      var ranked=_scoresToRanked(scS.finalResult,idKey);
+      var rho=ranked?_computeRho(ranked,oMap,idKey):null;
+      var wr=_withinMethodRho(scS,'scoring');
+      rows.push([p.name,p.seniority,'Scoring',
+        rho!==null?rho.toFixed(3):'',
+        wr?wr.r1_r2:'', wr?wr.status:'', scS.runs.length, '']);
+    }
+    if(pwS&&pwS.finalResult){
+      var ranked=_pwToRanked(pwS.finalResult,idKey);
+      var rho=ranked?_computeRho(ranked,oMap,idKey):null;
+      var wr=_withinMethodRho(pwS,'pairwise');
+      rows.push([p.name,p.seniority,'Pairwise',
+        rho!==null?rho.toFixed(3):'',
+        wr?wr.r1_r2:'', wr?wr.status:'', pwS.runs.length, '']);
+    }
+    if(!raS&&!scS&&!pwS&&p._metrics){
+      rows.push([p.name,p.seniority,'(eval)',p._metrics.sp||'','','','','']);
+    }
+  });
+  if(rows.length===1){ alert('No evaluation metrics available yet.'); return; }
+  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  showExportModal('Metrics CSV',csv,'pilot_metrics.csv','csv');
 }
 
 initBackendCard();

@@ -215,23 +215,9 @@ def _line_aircraft_score(pairings: List[Pairing], preferred_type: str) -> int:
     return round(preferred_count / len(pairings) * 100)
 
 
-def _line_pay_score(total_credit_hours: float, base_pay: float) -> int:
-    """
-    Score total monthly block pay against an expected monthly earnings baseline.
-
-    Expected monthly = base_pay × _EXPECTED_MONTHLY_CREDIT_HOURS.
-    Floor  = 85% of expected → score 0.
-    Ceiling = 125% of expected → score 100.
-    """
-    actual   = total_credit_hours * base_pay
-    expected = _EXPECTED_MONTHLY_CREDIT_HOURS * base_pay
-    floor_   = expected * 0.85
-    range_   = expected * 0.40
-    score    = (actual - floor_) / range_ * 100
-    return max(0, min(100, round(score)))
 
 
-def oracle_score_line(pilot: Pilot, line: Line) -> int:
+def oracle_score_line(pilot: Pilot, line: Line, pay_score: int = 50) -> int:
     """
     Score a monthly line (0–100) for a given pilot.
 
@@ -239,13 +225,17 @@ def oracle_score_line(pilot: Pilot, line: Line) -> int:
     its constituent pairing scores.  Returns 0 if the pilot is not qualified
     for any pairing in the line (ineligible lines always rank last).
 
+    pay_score must be pre-computed by the caller using normalise_line_pay_scores()
+    so that the credit-pay sub-score is meaningful relative to other lines.
+    Defaults to 50 (neutral) when called standalone without context.
+
     Sub-scores use the same five weights as pairing scoring (pilot.weights),
     but applied to monthly-level statistics:
       tafb        → total TAFB across all pairings
       hotel_nights → total nights away
       report_time  → average report-time sub-score across all pairings
       aircraft     → fraction of pairings on preferred aircraft type
-      credit_pay   → total monthly pay vs. expected monthly earnings
+      credit_pay   → normalised pay rank relative to other lines in the set
     """
     if not line.is_qualified(pilot):
         return 0
@@ -256,14 +246,13 @@ def oracle_score_line(pilot: Pilot, line: Line) -> int:
     hotel_s    = _line_hotel_score(line.total_nights_away, pilot.has_kids)
     report_s   = _line_report_score(line.pairings)
     aircraft_s = _line_aircraft_score(line.pairings, pilot.preferred_type)
-    pay_s      = _line_pay_score(line.total_credit_hours, pilot.base_pay)
 
     score = (
         tafb_s     * W.tafb        +
         hotel_s    * W.hotel_nights +
         report_s   * W.report_time  +
         aircraft_s * W.aircraft     +
-        pay_s      * W.credit_pay
+        pay_score  * W.credit_pay
     ) / 100
 
     return max(0, min(100, round(score)))
@@ -281,10 +270,12 @@ def oracle_rank_lines(pilot: Pilot, lines: List[Line]) -> List[RankedLine]:
     Returns:
         List of RankedLine sorted best → worst with oracle_rank assigned.
     """
+    pay_scores = normalise_line_pay_scores(pilot, lines)
+
     ranked = []
     for line in lines:
         qualified = line.is_qualified(pilot)
-        score     = oracle_score_line(pilot, line)
+        score     = oracle_score_line(pilot, line, pay_scores.get(line.id, 50))
         ranked.append(RankedLine(
             line=line,
             pilot=pilot,
@@ -325,4 +316,25 @@ def normalise_pay_scores(
     return {
         pid: round((pay - min_pay) / pay_range * 100)
         for pid, pay in pays.items()
+    }
+
+
+def normalise_line_pay_scores(pilot: Pilot, lines: List[Line]) -> dict:
+    """
+    Compute pay scores normalised across lines for this pilot.
+    Best-paying line → 100, worst → 0, others interpolated.
+
+    Returns dict: line.id → pay_score (0–100)
+    """
+    pays = {ln.id: ln.total_pay_for_pilot(pilot) for ln in lines}
+    min_pay = min(pays.values())
+    max_pay = max(pays.values())
+    pay_range = max_pay - min_pay
+
+    if pay_range == 0:
+        return {lid: 50 for lid in pays}
+
+    return {
+        lid: round((pay - min_pay) / pay_range * 100)
+        for lid, pay in pays.items()
     }

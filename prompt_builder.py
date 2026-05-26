@@ -8,18 +8,82 @@ Builds prompts for the two evaluation modes:
 Mirrors the JavaScript buildPromptFromPairings() / buildPwPrompt() in the POC.
 """
 
-from typing import List
+from typing import Dict, List, Optional, Union
 from models import Line, Pairing, Pilot
+
+
+# ---------------------------------------------------------------------------
+# Relative-context helpers
+# ---------------------------------------------------------------------------
+
+def _pay_label(pay: float, mean_pay: float) -> str:
+    """Describe pay relative to the mean of the current prompt's set."""
+    pct = (pay - mean_pay) / mean_pay * 100
+    if pct > 15:
+        return f"highest in this set, +{round(pct)}% above average"
+    elif pct > 5:
+        return f"above average, +{round(pct)}%"
+    elif pct >= -5:
+        return "average for this set"
+    elif pct >= -15:
+        return f"below average, -{round(abs(pct))}%"
+    else:
+        return f"lowest in this set, -{round(abs(pct))}% below average"
+
+
+def _tafb_label(tafb: float, all_tafbs: List[float]) -> str:
+    """Label TAFB relative to the full set shown in this prompt."""
+    base = f"{tafb}h"
+    if len(all_tafbs) <= 1:
+        return base
+    if tafb == max(all_tafbs):
+        return f"{base} (longest in this set)"
+    if tafb == min(all_tafbs):
+        return f"{base} (shortest in this set)"
+    return base
+
+
+def _nights_label(nights: int, all_nights: List[int]) -> str:
+    """Label nights-away relative to the full set shown in this prompt."""
+    base = f"{nights} night{'s' if nights != 1 else ''}"
+    if len(all_nights) <= 1:
+        return base
+    if nights == max(all_nights):
+        return f"{base} (most in this set)"
+    if nights == min(all_nights):
+        return f"{base} (fewest in this set)"
+    return base
+
+
+def _pairing_ctx(pilot: Pilot, pairings: List[Pairing]) -> Dict:
+    """Pre-compute relative-context stats for a list of pairings."""
+    pays = [p.pay_for_pilot(pilot.base_pay) for p in pairings]
+    return {
+        "mean_pay":   sum(pays) / len(pays),
+        "all_tafbs":  [p.tafb for p in pairings],
+        "all_nights": [p.nights_away for p in pairings],
+    }
+
+
+def _line_ctx(pilot: Pilot, lines: List[Line]) -> Dict:
+    """Pre-compute relative-context stats for a list of lines."""
+    pays = [line.total_pay_for_pilot(pilot) for line in lines]
+    return {
+        "mean_pay":   sum(pays) / len(pays),
+        "all_tafbs":  [line.total_tafb for line in lines],
+        "all_nights": [line.total_nights_away for line in lines],
+    }
 
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _pairing_summary(pilot: Pilot, pair: Pairing) -> str:
+def _pairing_summary(pilot: Pilot, pair: Pairing, ctx: Optional[Dict] = None) -> str:
     """
     Full pairing description for a prompt.
     Includes per-pilot personalised pay figure.
+    When ctx is provided (from _pairing_ctx), pay/TAFB/nights show relative labels.
     """
     legs_text = "\n".join(
         f"      Leg {i+1}: {l.dep} ({l.dep_city}) → {l.arr} ({l.arr_city})\n"
@@ -44,6 +108,22 @@ def _pairing_summary(pilot: Pilot, pair: Pairing) -> str:
     dow_list = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     start_dow = pair.start_dow if pair.start_dow in dow_list else "—"
 
+    if ctx:
+        pay_rel    = _pay_label(pilot_pay, ctx["mean_pay"])
+        tafb_str   = _tafb_label(pair.tafb, ctx["all_tafbs"])
+        nights_str = _nights_label(pair.nights_away, ctx["all_nights"])
+        pay_line   = (
+            f"    Your pay: ${pilot_pay:,} ({pair.credit_hours}h × ${pilot.base_pay}/hr — {pay_rel}) "
+            f"| Per diem: ${pair.per_diem} | Total trip value: ${total_value:,}"
+        )
+    else:
+        tafb_str   = f"{pair.tafb}h"
+        nights_str = f"{pair.nights_away}"
+        pay_line   = (
+            f"    Your pay: ${pilot_pay:,} ({pair.credit_hours}h × ${pilot.base_pay}/hr) "
+            f"| Per diem: ${pair.per_diem} | Total trip value: ${total_value:,}"
+        )
+
     return (
         f"  Pairing {pair.id} — {pair.num_legs} legs, {pair.nights_away} night(s) away\n"
         f"    Aircraft: {pair.aircraft_label} ({pair.aircraft}) | Qualified: {qualified}\n"
@@ -51,12 +131,11 @@ def _pairing_summary(pilot: Pilot, pair: Pairing) -> str:
         f"    Cities: {', '.join(pair.cities)}\n"
         f"{legs_text}\n"
         f"{overnights}\n"
-        f"    TAFB: {pair.tafb}h | Block: {pair.block_hours}h | Credit: {pair.credit_hours}h "
-        f"| Nights away: {pair.nights_away}\n"
+        f"    TAFB: {tafb_str} | Block: {pair.block_hours}h | Credit: {pair.credit_hours}h "
+        f"| Nights away: {nights_str}\n"
         f"    Report time Day 1: {pair.report_time_str()}\n"
         f"    Starts: {start_dow}\n"
-        f"    Your pay: ${pilot_pay:,} ({pair.credit_hours}h × ${pilot.base_pay}/hr) "
-        f"| Per diem: ${pair.per_diem} | Total trip value: ${total_value:,}"
+        f"{pay_line}"
     )
 
 
@@ -88,7 +167,7 @@ def _priority_list(pilot: Pilot) -> str:
         return (
             "Mid-career pilot. They balance home-time and compensation:\n"
             "  1. Reasonable TAFB (not too long)\n"
-            "  2. Hotel nights (moderate preference for fewer)\n"
+            "  2. Hotel nights away — this pilot prefers trips with overnight stays over quick turns; more nights means more per diem income and richer flying experience\n"
             "  3. Report times — avoids very early reports where possible\n"
             "  4. Preferred aircraft type\n"
             "  5. Credit pay and per diem\n"
@@ -101,7 +180,7 @@ def _priority_list(pilot: Pilot) -> str:
             "  2. Higher credit pay and per diem\n"
             "  3. Interesting destinations and routes\n"
             "  4. Report times (some tolerance for early reports)\n"
-            "  5. TAFB and nights away (lower priority at this career stage)"
+            "  5. Hotel nights — actively preferred; overnight layovers mean more per diem pay and more hours building experience, which is valuable at this stage of their career"
         )
 
 
@@ -114,7 +193,8 @@ def oracle_prompt(pilot: Pilot, pairings: List[Pairing]) -> str:
     Prompt asking the LLM to rank all pairings for a single pilot.
     Returns a string ready to send to any LLM.
     """
-    pairing_block = "\n\n".join(_pairing_summary(pilot, p) for p in pairings)
+    ctx           = _pairing_ctx(pilot, pairings)
+    pairing_block = "\n\n".join(_pairing_summary(pilot, p, ctx) for p in pairings)
     n = len(pairings)
 
     return (
@@ -154,6 +234,7 @@ def pairwise_prompt(pilot: Pilot, pairing_a: Pairing, pairing_b: Pairing) -> str
     Prompt asking the LLM to pick the better of two pairings for a pilot.
     Returns a string ready to send to any LLM.
     """
+    ctx = _pairing_ctx(pilot, [pairing_a, pairing_b])
     return (
         "You are evaluating which of two flight pairings is better for a specific airline pilot.\n\n"
         "== PILOT PROFILE ==\n"
@@ -163,9 +244,9 @@ def pairwise_prompt(pilot: Pilot, pairing_a: Pairing, pairing_b: Pairing) -> str
         "IMPORTANT: Both pairings listed below are eligible for this pilot to bid.\n"
         "Choose purely based on which pairing better fits this pilot's preference profile.\n\n"
         "== OPTION 1 ==\n"
-        f"{_pairing_summary(pilot, pairing_a)}\n\n"
+        f"{_pairing_summary(pilot, pairing_a, ctx)}\n\n"
         "== OPTION 2 ==\n"
-        f"{_pairing_summary(pilot, pairing_b)}\n\n"
+        f"{_pairing_summary(pilot, pairing_b, ctx)}\n\n"
         "== TASK ==\n"
         "Which pairing is better for this pilot? Reply ONLY with JSON (no markdown):\n"
         '{"winner": <1 or 2>, "confidence": "<high|medium|low>", '
@@ -288,10 +369,12 @@ def scoring_prompt(pilot: Pilot, pairing: Pairing, anchor: str = "") -> str:
 # Line-level helpers
 # ---------------------------------------------------------------------------
 
-def _line_summary(pilot: Pilot, line: Line) -> str:
+def _line_summary(pilot: Pilot, line: Line, ctx: Optional[Dict] = None) -> str:
     """
     Full description of a monthly line for a prompt.
     Shows aggregate stats then each constituent pairing.
+    When ctx is provided (from _line_ctx), pay/TAFB/nights show relative labels.
+    Individual pairings within the line always show relative context within the line.
     """
     qualified    = line.is_qualified(pilot)
     qual_label   = "yes — all pairings within qualification" if qualified else "NO — pilot not qualified for one or more pairings"
@@ -312,16 +395,26 @@ def _line_summary(pilot: Pilot, line: Line) -> str:
         sched_rows.append(f"    P{p.id} ({p.start_dow}): " + " | ".join(leg_parts))
     schedule_block = "\n".join(sched_rows)
 
+    if ctx:
+        pay_rel    = _pay_label(total_pay, ctx["mean_pay"])
+        tafb_str   = _tafb_label(line.total_tafb, ctx["all_tafbs"])
+        nights_str = _nights_label(line.total_nights_away, ctx["all_nights"])
+        pay_detail = f"${total_pay:,} ({line.total_credit_hours}h × ${pilot.base_pay}/hr — {pay_rel})"
+    else:
+        tafb_str   = f"{line.total_tafb}h"
+        nights_str = f"{line.total_nights_away} nights"
+        pay_detail = f"${total_pay:,} ({line.total_credit_hours}h × ${pilot.base_pay}/hr)"
+
     header = (
         f"LINE {line.id} — monthly schedule summary\n"
         f"  Aircraft types used:    {ac_str}\n"
         f"  Qualified for all:      {qual_label}\n"
         f"  Scheduling conflicts:   {conflict_lbl}\n"
-        f"  Total TAFB:             {line.total_tafb}h across {len(line.pairings)} pairings\n"
-        f"  Total nights away:      {line.total_nights_away} nights this month\n"
+        f"  Total TAFB:             {tafb_str} across {len(line.pairings)} pairings\n"
+        f"  Total nights away:      {nights_str} this month\n"
         f"  Total block hours:      {line.total_block_hours}h\n"
         f"  Total credit hours:     {line.total_credit_hours}h\n"
-        f"  Total block pay:        ${total_pay:,} ({line.total_credit_hours}h × ${pilot.base_pay}/hr)\n"
+        f"  Total block pay:        {pay_detail}\n"
         f"  Total per diem:         ${line.total_per_diem:,}\n"
         f"  Total monthly value:    ${total_val:,}\n"
         f"  Start days of week:     {', '.join(line.start_days)}\n"
@@ -329,9 +422,11 @@ def _line_summary(pilot: Pilot, line: Line) -> str:
         f"  Flight schedule:\n{schedule_block}"
     )
 
+    # Pairings within a line always show relative context against each other
+    pairing_ctx = _pairing_ctx(pilot, line.pairings)
     pairing_blocks = "\n\n".join(
         f"  — Pairing {p.id} of Line {line.id} —\n"
-        + "\n".join("  " + ln for ln in _pairing_summary(pilot, p).splitlines())
+        + "\n".join("  " + ln for ln in _pairing_summary(pilot, p, pairing_ctx).splitlines())
         for p in line.pairings
     )
 
@@ -420,8 +515,9 @@ def oracle_line_prompt(pilot: Pilot, lines: List[Line]) -> str:
 
     Returns a string ready to send to any LLM.
     """
-    line_blocks = "\n\n" + ("=" * 60) + "\n\n"
-    line_blocks = line_blocks.join(_line_summary(pilot, ln) for ln in lines)
+    ctx        = _line_ctx(pilot, lines)
+    sep        = "\n\n" + ("=" * 60) + "\n\n"
+    line_blocks = sep.join(_line_summary(pilot, ln, ctx) for ln in lines)
     n = len(lines)
 
     return (
@@ -515,6 +611,7 @@ def pairwise_line_prompt(pilot: Pilot, line_a: Line, line_b: Line) -> str:
     Returns a string ready to send to any LLM.
     Output JSON: {"winner": <1 or 2>, "confidence": "...", "reason": "..."}
     """
+    ctx = _line_ctx(pilot, [line_a, line_b])
     return (
         "You are evaluating which of two monthly flying lines is better for a specific airline pilot.\n\n"
         "Each option is a COMPLETE MONTHLY SCHEDULE — the pilot would fly ALL pairings in their chosen line.\n\n"
@@ -525,11 +622,128 @@ def pairwise_line_prompt(pilot: Pilot, line_a: Line, line_b: Line) -> str:
         "IMPORTANT: Both lines listed below contain only pairings the pilot is qualified for.\n"
         "Choose purely based on which line better fits this pilot's monthly preference profile.\n\n"
         "== OPTION 1 — Monthly Line ==\n"
-        f"{_line_summary(pilot, line_a)}\n\n"
+        f"{_line_summary(pilot, line_a, ctx)}\n\n"
         "== OPTION 2 — Monthly Line ==\n"
-        f"{_line_summary(pilot, line_b)}\n\n"
+        f"{_line_summary(pilot, line_b, ctx)}\n\n"
         "== TASK ==\n"
         "Which monthly line is better for this pilot? Reply ONLY with JSON (no markdown):\n"
         '{"winner": <1 or 2>, "confidence": "<high|medium|low>", '
         '"reason": "<max 50 words explaining the choice>"}'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Adaptive pairwise prompt
+# ---------------------------------------------------------------------------
+
+def adaptive_pairwise_prompt(
+    pilot: Pilot,
+    item_a: Union[Line, Pairing],
+    item_b: Union[Line, Pairing],
+    round_num: int,
+    context: str = "",
+) -> str:
+    """
+    Prompt for a single adaptive pairwise comparison.
+
+    Differs from pairwise_prompt / pairwise_line_prompt in two ways:
+    1. Includes round_num context ("This is comparison N of approximately M")
+    2. Accepts an optional context string giving provisional ranking hints
+       for round 2 comparisons — helps the LLM be consistent.
+
+    Output JSON:
+    {"winner": <1 or 2>, "confidence": "<high|medium|low>",
+     "reason": "<max 40 words>"}
+    """
+    is_line = isinstance(item_a, Line)
+
+    if is_line:
+        ctx = _line_ctx(pilot, [item_a, item_b])
+        option1 = _line_summary(pilot, item_a, ctx)
+        option2 = _line_summary(pilot, item_b, ctx)
+        item_label = "monthly flying line"
+        option_label = "MONTHLY LINE"
+        task_line = "Which monthly line is better for this pilot?"
+    else:
+        ctx = _pairing_ctx(pilot, [item_a, item_b])
+        option1 = _pairing_summary(pilot, item_a, ctx)
+        option2 = _pairing_summary(pilot, item_b, ctx)
+        item_label = "flight pairing"
+        option_label = "PAIRING"
+        task_line = "Which pairing is better for this pilot?"
+
+    round_note = f"[Round {round_num} comparison]"
+    context_block = f"\n== CONTEXT FROM EARLIER COMPARISONS ==\n{context}\n" if context else ""
+
+    return (
+        f"You are evaluating which of two {item_label}s is better for a specific airline pilot.\n"
+        f"{round_note}\n\n"
+        "== PILOT PROFILE ==\n"
+        f"{_pilot_profile(pilot)}\n\n"
+        "== HOW THIS PILOT PRIORITISES ==\n"
+        f"{_priority_list(pilot)}\n"
+        f"{context_block}\n"
+        f"== OPTION 1 — {option_label} ==\n"
+        f"{option1}\n\n"
+        f"== OPTION 2 — {option_label} ==\n"
+        f"{option2}\n\n"
+        "== TASK ==\n"
+        f"{task_line} Reply ONLY with JSON (no markdown):\n"
+        '{"winner": <1 or 2>, "confidence": "<high|medium|low>", '
+        '"reason": "<max 40 words>"}'
+    )
+
+
+# ---------------------------------------------------------------------------
+# MaxDiff prompt
+# ---------------------------------------------------------------------------
+
+def maxdiff_prompt(
+    pilot: Pilot,
+    items: List[Union[Line, Pairing]],
+    item_numbers: List[int],
+) -> str:
+    """
+    MaxDiff (Maximum Difference Scaling) prompt.
+    Shows 4-5 items simultaneously and asks for best AND worst.
+
+    Each call gives 2 data points (best and worst) for Bradley-Terry fitting.
+
+    Output JSON:
+    {"best": <1-5>, "worst": <1-5>,
+     "reason_best": "<20 words>", "reason_worst": "<20 words>"}
+    """
+    if not items:
+        raise ValueError("items must be non-empty")
+
+    is_line = isinstance(items[0], Line)
+    n = len(items)
+
+    if is_line:
+        ctx = _line_ctx(pilot, items)
+        summaries = [_line_summary(pilot, item, ctx) for item in items]
+        item_type = "monthly line"
+    else:
+        ctx = _pairing_ctx(pilot, items)
+        summaries = [_pairing_summary(pilot, item, ctx) for item in items]
+        item_type = "flight pairing"
+
+    options_block = "\n\n".join(
+        f"== OPTION {item_numbers[i]} ==\n{summaries[i]}"
+        for i in range(n)
+    )
+    num_range = f"1–{n}"
+
+    return (
+        f"You are evaluating {n} {item_type}s for a specific airline pilot.\n\n"
+        "== PILOT PROFILE ==\n"
+        f"{_pilot_profile(pilot)}\n\n"
+        "== HOW THIS PILOT PRIORITISES ==\n"
+        f"{_priority_list(pilot)}\n\n"
+        f"{options_block}\n\n"
+        "== TASK ==\n"
+        f"From the {n} options above, identify the BEST and WORST for this pilot.\n"
+        f"Reply ONLY with JSON (no markdown):\n"
+        f'{{"best": <{num_range}>, "worst": <{num_range}>, '
+        f'"reason_best": "<20 words>", "reason_worst": "<20 words>"}}'
     )

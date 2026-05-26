@@ -89,6 +89,38 @@ FAMILY_OPTIONS = [
 
 DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+# ---------------------------------------------------------------------------
+# Delta 2023 Captain pay rates (Section 3 B.2)
+# ---------------------------------------------------------------------------
+
+_PAY_RATES = {
+    'B767': {1: 280, 3: 295, 6: 331, 8: 336, 10: 342, 12: 349},
+    'B737': {1: 260, 3: 275, 6: 320, 8: 325, 10: 330, 12: 335},
+}
+
+
+def lookup_pay_rate(age: int, aircraft_type: str) -> int:
+    """
+    Return Captain base pay ($/hr) from the Delta 2023 contract pay tables.
+
+    Longevity step is derived from age:
+      age < 30  → step 1   age 30-34 → step 3   age 35-39 → step 6
+      age 40-44 → step 8   age 45-49 → step 10  age 50+   → step 12
+    """
+    if age < 30:
+        step = 1
+    elif age < 35:
+        step = 3
+    elif age < 40:
+        step = 6
+    elif age < 45:
+        step = 8
+    elif age < 50:
+        step = 10
+    else:
+        step = 12
+    return _PAY_RATES.get(aircraft_type, _PAY_RATES['B737'])[step]
+
 
 def _get_distance(dep: str, arr: str) -> int:
     """Look up distance; try both orderings; fall back to estimate."""
@@ -148,7 +180,7 @@ class ScenarioGenerator:
             preferred     = ("B767" if wide_qual and rng.random() > 0.5
                              else "B737")
             qualified     = ["B737", "B767"] if wide_qual else ["B737"]
-            base_pay      = rng.randint(180, 270)
+            base_pay      = lookup_pay_rate(age, preferred)
             min_rest      = rng.randint(10, 14)
 
             pilot = Pilot(
