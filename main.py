@@ -704,14 +704,12 @@ def export_results(
             "seniority": p.seniority,
             "home_base": p.home_base,
             "qualified_types": p.qualified_types,
-            "preferred_type": p.preferred_type,
             "min_rest": p.min_rest,
             "base_pay": p.base_pay,
             "oracle_weights": {
                 "tafb": p.weights.tafb,
                 "hotel_nights": p.weights.hotel_nights,
                 "report_time": p.weights.report_time,
-                "aircraft": p.weights.aircraft,
                 "credit_pay": p.weights.credit_pay,
             },
             "eval_metrics": {
@@ -917,7 +915,7 @@ details[open]>summary{border-radius:6px 6px 0 0;border-bottom:1px solid #d1d5db}
                 f"<tr>"
                 f"<td>#{p.seniority}</td>"
                 f"<td><strong>{esc(p.name)}</strong><br>"
-                f"<small>{esc('/'.join(p.qualified_types))}, pref: {esc(p.preferred_type)}</small></td>"
+                f"<small>{esc('/'.join(p.qualified_types))}</small></td>"
                 f"<td>{ora_id}{bumped}</td>"
                 f"<td>{ora_rank}</td>"
                 f"<td>{llm_id}</td>"
@@ -1043,7 +1041,7 @@ details[open]>summary{border-radius:6px 6px 0 0;border-bottom:1px solid #d1d5db}
         return f"""<details>
 <summary>
   <span>#{pilot.seniority} &nbsp; Capt. {esc(pilot.name)}</span>
-  <span style="font-weight:400;color:#555">&nbsp;·&nbsp; {esc('/'.join(pilot.qualified_types))}, pref: {esc(pilot.preferred_type)}{eval_str}</span>
+  <span style="font-weight:400;color:#555">&nbsp;·&nbsp; {esc('/'.join(pilot.qualified_types))}{eval_str}</span>
 </summary>
 <div class="inner">
 <p style="font-size:.82rem;color:#555;margin:.2rem 0 .6rem">

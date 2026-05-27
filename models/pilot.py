@@ -14,13 +14,12 @@ class OracleWeights:
     tafb: int = 20          # Time Away From Base
     hotel_nights: int = 18  # Nights away from home
     report_time: int = 12   # Wake-up / report time burden
-    aircraft: int = 15      # Aircraft type preference
-    credit_pay: int = 25    # Credit-hour pay
+    credit_pay: int = 40    # Credit-hour pay (absorbs former aircraft weight)
     seniority: int = 10     # Seniority eligibility (always 100 if eligible)
 
     def total(self) -> int:
         return (self.tafb + self.hotel_nights + self.report_time
-                + self.aircraft + self.credit_pay + self.seniority)
+                + self.credit_pay + self.seniority)
 
     def validate(self) -> bool:
         return self.total() == 100

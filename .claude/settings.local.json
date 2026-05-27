@@ -6,7 +6,9 @@
       "Bash(python -m py_compile generator.py)",
       "Bash(python -m py_compile oracle.py)",
       "Bash(python -c \"import scipy; import numpy; print\\('scipy', scipy.__version__, 'numpy', numpy.__version__\\)\")",
-      "Bash(python -c \"import evaluator; import models; import prompt_builder; print\\('All imports OK'\\)\")"
+      "Bash(python -c \"import evaluator; import models; import prompt_builder; print\\('All imports OK'\\)\")",
+      "Bash(python -m py_compile models.py oracle.py generator.py prompt_builder.py)",
+      "Bash(python -m py_compile models.py oracle.py generator.py prompt_builder.py main.py models/pilot.py)"
     ]
   }
 }

@@ -21,7 +21,7 @@ pilot_bidding/
 
 ### Manual mode (paste prompts to any LLM, no API key needed)
 ```bash
-python main.py --pilots 3 --pairings 5
+python main.py --pilots 5 --pairings 5
 ```
 
 ### Automated mode (requires API key)
@@ -40,7 +40,7 @@ OPENAI_API_KEY=sk-... python main.py --auto --pilots 10 --pairings 20 --model gp
 
 | Scenario | Pilots | Pairings | Method | Est. cost |
 |---|---|---|---|---|
-| 1 (current) | 3 | 5 | Oracle ranking, manual | $0 |
+| 1 (current) | 5 | 5 | Oracle ranking, manual | $0 |
 | 2 | 5 | 10 | Oracle ranking, automated | ~$0.10 |
 | 3 | 10 | 20 | Oracle ranking, automated | ~$1 |
 | 4* | 10 | 50 (10 lines) | Pairwise, automated | ~$2 |
@@ -62,9 +62,11 @@ Hard constraint. A B737-only pilot cannot bid a B767 pairing.
 Unqualified pairings score 0 and are ranked last by the oracle.
 
 ### Oracle weights
-Derived from pilot profile (family status, age). Two of five factors
-are linked to profile; three are fixed ratios. Oracle is a reference
-point, not ground truth.
+Derived from pilot profile (family status, age). **Four factors** sum to 100:
+`tafb`, `hotel_nights`, `report_time`, and `credit_pay`. Two factors (`tafb`
+and `hotel_nights`) are profile-linked; `report_time` is fixed at 12 for all
+pilots; `credit_pay` fills the remainder. The oracle is a reference point, not
+ground truth.
 
 ### Pay
 Per-pilot: `credit_hours × pilot.base_pay`. Each pilot sees their own
@@ -74,7 +76,137 @@ only (not dollars) since pay varies by pilot.
 ### Hotel quality
 Fixed at Standard for all hotels (removed as a variable factor).
 
+---
+
+## Scenario generation
+
+### Pilot generation philosophy
+
+Pilots are generated deterministically from a seeded PRNG (`pilot_seed=1234567`).
+The same seed always produces the same pilot pool, making results reproducible
+across runs and machines.
+
+**Profile attributes drawn randomly:**
+
+| Attribute | Range / options |
+|---|---|
+| Age | 26–58 (uniform) |
+| Family status | Single · Married no kids · Married 1 child · Married 2+ kids · Single parent |
+| Aircraft qualification | 65% dual (B737 + B767) · 35% B737-only |
+| Min rest | 10–14 h |
+
+**Oracle weights are derived automatically from age + family status** — the
+analyst never sets weights by hand. The derivation encodes real-world priority
+differences across three pilot archetypes:
+
+| Archetype | `has_kids` | `is_mid_career` (age ≥ 40) | hotel_nights w | tafb w | credit_pay w |
+|---|---|---|---|---|---|
+| Family pilot | ✓ | either | 26 | 22 | 40 |
+| Mid-career, no kids | ✗ | ✓ | 16 | 15 | 57 |
+| Early-career, no kids | ✗ | ✗ | 9 | 9 | 70 |
+
+`report_time` is fixed at 12 for all pilots. `credit_pay` fills to 100.
+
+The direction of hotel_nights scoring also flips by archetype:
+- **Family pilots** — fewer nights away = better (less time from home).
+- **Non-family pilots** — more nights away = better (more per-diem income and
+  flying experience). The LLM prompt reflects this explicitly via the priority
+  list in `prompt_builder._priority_list()`.
+
+**Pay rates** follow the Delta 2023 contract longevity table (6 steps mapped
+from age). Older pilots earn more per credit hour, so their per-pilot pay
+figures in prompts are higher even for identical pairings.
+
+---
+
+### Pairing generation philosophy
+
+All pairings are **circular** — every trip starts and ends at the home base
+(default `BOS`). This mirrors real airline contract pairings.
+
+**Structural choices:**
+
+- **Legs**: sampled from `[2, 3, 3, 4]` (weighted toward 3-leg trips).
+  `nights_away = num_legs − 1`, giving a natural 1–3 overnight spread.
+- **Schedules are chained realistically**:
+  - First departure: morning bank (06:00–09:30, 55%) or afternoon bank
+    (14:00–18:00, 45%), rounded to 5-min slots.
+  - Hotel departures (day 2+): always 06:00–08:30.
+  - Ground turns: B767 needs 75–120 min; B737 needs 50–90 min.
+- **Aircraft mix**: roughly 50/50 B737/B767 unless `max_b767` is set (e.g.
+  when building 25 pairings for line mode, a 17/8 ratio is enforced so
+  B737-only pilots always have biddable options).
+
+**Pay computation** (per Delta 2023 contract):
+
+```
+credit_hours  = max(block_hours, tafb / 3.5)   # 1-for-3.5 rig
+block_pay     = credit_hours × pilot.base_pay
+per_diem      = tafb × $2.85
+total_value   = block_pay + per_diem
+```
+
+---
+
+### Line generation philosophy
+
+Lines group pairings into monthly schedules — the atomic unit pilots actually
+bid on in Scenarios 4+.
+
+**Key invariant — aircraft qualification**: B737 pairings are placed into lines
+before B767 pairings. This ensures that the first lines in the pool are
+all-B737, giving B737-only pilots at least some fully-qualified options. A line
+requires qualification on **every pairing it contains**.
+
+**Conflict detection**: the `Line.has_conflicts()` method checks whether any
+two pairings overlap on the calendar (using a 6-day spacing convention). The
+generator does not enforce conflict-free lines automatically — callers can
+filter or regenerate if needed.
+
+Use `ScenarioGenerator.build_lines()` directly:
+
+```python
+from generator import ScenarioGenerator
+gen      = ScenarioGenerator()
+pilots   = gen.build_pilots(n=5)
+pairings = gen.build_pairings(n=25, pilots=pilots, max_b767=8)
+lines    = gen.build_lines(pairings, n_lines=5, pairings_per_line=5)
+```
+
+---
+
+## Oracle sub-scores
+
+Each pairing/line is scored on four sub-dimensions (each 0–100), then combined
+as a weighted sum using the pilot's weights.
+
+### Pairing-level bounds
+
+| Sub-score | Formula / bounds |
+|---|---|
+| TAFB | Linear: 18h → 100, 80h → 0 |
+| Hotel nights (family) | 100 − 35 × nights (floor 0); 0 nights = 100, 3 nights = 0 |
+| Hotel nights (non-family) | 20 + 40 × nights (cap 100); prefers more overnights |
+| Report time | ≥ 07:00 → 100, ≤ 04:00 → 0, linear between |
+| Credit pay | Normalised: best-paying pairing = 100, worst = 0; B767 carries a 4% pay premium |
+
+### Line-level bounds
+
+| Sub-score | Formula / bounds |
+|---|---|
+| Total TAFB | Linear: 90h → 100, 400h → 0 (5× per-pairing bounds) |
+| Total nights (family) | Ideal = 9 nights; −15 per night deviation (floor 0) |
+| Total nights (non-family) | 7 × nights up to 14 nights → 98, then −20 per night above 14 |
+| Report time | Average of per-pairing report-time sub-scores |
+| Credit pay | Normalised across lines; B767 pairings carry 4% premium within line totals |
+
+---
+
 ## Methods
+
+> **Implementation note**: The HTML/JavaScript POC and the Python backend
+> implement the same three methods but with some differences in the fitting
+> algorithms. Where they differ this is called out explicitly below.
 
 ### A · Rank-all
 
@@ -98,10 +230,9 @@ $$P(i \text{ beats } j) = \frac{s_i}{s_i + s_j}$$
 
 where $s_i > 0$ is the latent strength of item $i$.
 
-#### Fitting — MM algorithm
+#### Fitting — HTML/JavaScript implementation (MM algorithm)
 
-Strengths are estimated by maximising the log-likelihood via the
-Minorization-Maximization (MM) iterative update:
+Strengths are estimated via the Minorization-Maximization (MM) iterative update:
 
 $$s_i^{\text{new}} = \frac{W_i}{\displaystyle\sum_{(i,j)\in\text{comparisons}} \frac{1}{s_i + s_j}}$$
 
@@ -114,6 +245,12 @@ where $W_i$ is the total number of wins for item $i$.
 
 **Zero-win floor**: items with $W_i = 0$ receive $s_i = 0.01$ instead of 0.
 This prevents rank collapse and ensures all items appear in the final ranking.
+
+> **Python backend note**: `evaluator.BradleyTerryModel` uses a different
+> fitting approach — log-parameterisation MLE solved via **scipy L-BFGS-B**
+> (`theta[0]` fixed at 0 for identifiability). The end result is equivalent
+> but the Python version leverages scipy for numerical stability. The MM
+> algorithm above is the primary implementation used in the HTML POC.
 
 #### Adaptive pair design (~N comparisons vs N(N−1)/2 brute force)
 
@@ -153,14 +290,18 @@ generic rubric.
 - 2 runs → final score = mean.
 - 3 runs → final score = median (triggered when consistency is unstable after run 2).
 
-#### Tie detection (CI-overlap)
+#### Tie detection (mean gap + CI-overlap)
 
-Items $A$ and $B$ are marked **tied** if their score intervals overlap:
+Items $A$ and $B$ are marked **tied** only when **both** conditions hold:
 
-$$(\mu_A - \sigma_A \leq \mu_B + \sigma_B) \;\text{AND}\; (\mu_B - \sigma_B \leq \mu_A + \sigma_A)$$
+1. **Mean gap** is small: $|\mu_A - \mu_B| < 5$ points
+2. **Confidence intervals overlap**: $(\mu_A - \sigma_A \leq \mu_B + \sigma_B)$ AND $(\mu_B - \sigma_B \leq \mu_A + \sigma_A)$
 
 where $\mu$ is the mean score and $\sigma$ is the standard deviation across runs.
-Overlapping intervals indicate the LLM cannot reliably distinguish the two items.
+
+The mean-gap guard (condition 1) prevents two items whose CIs happen to be wide
+from being declared tied even when their means are clearly separated. Both
+conditions must be satisfied together for a tie to be declared.
 
 **Oracle tie parameters** (ground-truth grouping):
 - Threshold: ±3 points between adjacent items triggers a tie.
@@ -180,28 +321,16 @@ Overlapping intervals indicate the LLM cannot reliably distinguish the two items
 
 Note: these measure agreement with the oracle, not absolute pilot truth.
 
-## Extending to lines
-
-For Scenarios 4+, group pairings into monthly lines before building prompts:
-
-```python
-from models import Pairing
-from typing import List
-
-def group_into_lines(pairings: List[Pairing], pairings_per_line: int = 5):
-    lines = []
-    for i in range(0, len(pairings), pairings_per_line):
-        lines.append(pairings[i:i+pairings_per_line])
-    return lines
-```
-
-Then build one prompt per line (or per pilot×line for scoring mode).
+---
 
 ## Dependencies
 
-```
-pip install anthropic   # for Anthropic API
-pip install openai      # for OpenAI API
-```
+### HTML/JavaScript POC
+No dependencies — runs entirely in the browser with no build step.
 
-No other dependencies — standard library only.
+### Python backend
+```
+pip install anthropic      # Anthropic API (Claude models)
+pip install openai         # OpenAI API (GPT models)
+pip install numpy scipy    # Required by evaluator.py (BradleyTerry MLE fitting)
+```

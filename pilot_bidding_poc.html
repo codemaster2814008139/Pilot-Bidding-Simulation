@@ -200,6 +200,20 @@ hr{border:none;border-top:1px solid #f1f5f9;margin:1.25rem 0}
     <div class="pairing-grid" id="setupPairings"></div>
   </div>
   <div id="setupLinesSection">
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:10px;font-size:11px;font-family:monospace;flex-wrap:wrap">
+      <span style="color:#6b7280;font-weight:600">Generation mode:</span>
+      <label style="cursor:pointer;display:flex;align-items:center;gap:5px">
+        <input type="radio" name="lineGenMode" value="random" checked onchange="setLineGenMode('random')">
+        <span>Random</span>
+      </label>
+      <label style="cursor:pointer;display:flex;align-items:center;gap:5px">
+        <input type="radio" name="lineGenMode" value="structured" onchange="setLineGenMode('structured')">
+        <span>Structured <span style="color:#9ca3af;font-size:10px">(balanced TAFB / aircraft / pay)</span></span>
+      </label>
+    </div>
+    <div id="structuredModeNote" style="display:none;font-size:10px;font-family:monospace;color:#7c3aed;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;padding:6px 10px;margin-bottom:8px">
+      Lines balanced across TAFB range, aircraft mix, and credit hours for meaningful pilot preference differentiation
+    </div>
     <div class="card-title" style="margin-bottom:8px">20 monthly lines <span class="line-mode-badge">LINE MODE</span> — 5 pairings each · 100 pairings total</div>
     <div class="line-grid" id="setupLines"></div>
   </div>
@@ -837,10 +851,11 @@ function blockMins(dist,spd){
 ══════════════════════════════════════════ */
 let pilots=[], pairings=[], activePilot={setup:0,oracle:0,prompt:0,eval:0}, log=[];
 let lineMode=true, lines=[], linePairings=[];
+let lineGenMode='random'; // 'random' | 'structured'
 const N_LINES=10, PAIRINGS_PER_LINE=5;
 
-const W_KEYS=['tafb','hotelNights','reportTime','aircraft','creditPay'];
-const W_LABELS={tafb:'TAFB (time away)',hotelNights:'Hotel nights away',reportTime:'Report / wake-up time',aircraft:'Aircraft type',creditPay:'Credit pay'};
+const W_KEYS=['tafb','hotelNights','reportTime','creditPay'];
+const W_LABELS={tafb:'TAFB (time away)',hotelNights:'Hotel nights away',reportTime:'Report / wake-up time',creditPay:'Credit pay'};
 
 /* ══════════════════════════════════════════
    PAY RATE TABLE — Delta 2023 Captain pay (Section 3 B.2)
@@ -882,26 +897,24 @@ function buildPilots(randomise){
     const hotelW  = hasKids ? 26 : midPlus ? 16 : 9;
     const tafbW   = hasKids ? 22 : midPlus ? 15 : 9;
     const reportW = 12;
-    const rem = 100 - hotelW - tafbW - reportW;
     const w = {
       tafb:        tafbW,
       hotelNights: hotelW,
       reportTime:  reportW,
-      aircraft:    Math.round(rem * 0.35),
-      creditPay:   0,
+      creditPay:   100 - tafbW - hotelW - reportW,
     };
-    w.creditPay = 100 - w.tafb - w.hotelNights - w.reportTime - w.aircraft;
 
-    const preferredType = wideQual && rand(0,1) ? 'B767' : 'B737';
+    // consume RNG tick to keep seed deterministic with old preferredType pick
+    rand(0,1);
+    const primaryAc = wideQual ? 'B767' : 'B737';
     const minRest = rand(10,14);
-    const basePay = lookupPayRate(age, preferredType);
+    const basePay = lookupPayRate(age, primaryAc);
 
     return {
       id:i, name, age, family, hasKids,
       seniority: i+1,
       homeBase: 'BOS',
       qualifiedTypes: wideQual ? ['B737','B767'] : ['B737'],
-      preferredType,
       minRest,
       basePay,
       weights: {...w},
@@ -1047,18 +1060,16 @@ function oracleScorePairing(pilot, pair){
     ? 100
     : Math.max(0, Math.round((repMins - worstReport) / (idealReport - worstReport) * 100));
 
-  // Aircraft type preference
-  const aircraftScore = pair.aircraft === pilot.preferredType ? 100 : 45;
-
-  // Credit pay score — computed per-pilot using their own base pay
-  const pilotPay       = Math.round(pair.creditHours * pilot.basePay); // this pilot's actual pay
-  const expectedCredit = pilot.basePay * pair.creditHours;
+  // Credit pay score — B767 pairings earn 4% more per credit hour
+  const effectiveRate  = pair.aircraft === 'B767' ? pilot.basePay * 1.04 : pilot.basePay;
+  const pilotPay       = Math.round(pair.creditHours * effectiveRate);
+  const expectedPay    = pilot.basePay * pair.creditHours; // baseline without premium
   const creditPayScore = Math.min(100, Math.max(0,
-    Math.round((pilotPay - expectedCredit*0.85) / (expectedCredit*0.4) * 100)));
+    Math.round((pilotPay - expectedPay*0.85) / (expectedPay*0.4) * 100)));
 
   return Math.round(
     (tafbScore*W.tafb + hotelScore*W.hotelNights + reportScore*W.reportTime +
-     aircraftScore*W.aircraft + creditPayScore*W.creditPay) / 100
+     creditPayScore*W.creditPay) / 100
   );
 }
 
@@ -1160,7 +1171,7 @@ function renderRoster(containerId, clickFn, activeId){
       <div class="pc-meta">
         Age ${p.age} · ${p.family}<br>
         Seniority #${p.seniority} · ${p.homeBase}<br>
-        ${p.qualifiedTypes.map(t=>`<span class="type-tag tag-${t==='B767'?'wide':'narrow'}">${t}</span>`).join('')} · Prefers ${p.preferredType}<br>
+        ${p.qualifiedTypes.map(t=>`<span class="type-tag tag-${t==='B767'?'wide':'narrow'}">${t}</span>`).join('')}<br>
         $${p.basePay}/hr
       </div>
       ${pilotBadge(p)}
@@ -1272,7 +1283,6 @@ Age: ${p.age}
 Family status: ${p.family}
 Home base: ${p.homeBase}
 Aircraft qualifications: ${p.qualifiedTypes.join(', ')}
-Preferred aircraft: ${p.preferredType}
 Minimum rest required between duties: ${p.minRest}h
 Base pay rate: $${p.basePay}/hr (credit hours are paid, not just block hours)
 
@@ -1282,24 +1292,24 @@ ${hasKids
   1. Shorter TAFB (less time away from home)
   2. Fewer hotel nights away
   3. Report time — early reports (before 6am) are strongly undesirable
-  5. Higher credit pay (paid on credit hours, not just block)
-  6. Qualified aircraft type (${p.qualifiedTypes.join(' or ')})
-  7. Seniority eligibility (hard constraint)`
+  4. Higher credit pay (paid on credit hours, not just block)
+  5. Seniority eligibility (hard constraint)
+  Note on aircraft pay: B767 pairings pay approximately 4% more per credit hour than B737 pairings — this difference is already reflected in the pay figures shown for each line.`
   : p.age>=40
   ? `Mid-career pilot. They balance home-time and compensation:
   1. Reasonable TAFB (not too long)
   2. Hotel nights (moderate preference for fewer)
   3. Report time — early reports (before 6am) are undesirable
-  5. Credit pay (paid on credit hours, not just block)
-  6. Preferred aircraft (${p.preferredType})
-  7. Seniority eligibility (hard constraint)`
+  4. Credit pay (paid on credit hours, not just block)
+  5. Seniority eligibility (hard constraint)
+  Note on aircraft pay: B767 pairings pay approximately 4% more per credit hour than B737 pairings — this difference is already reflected in the pay figures shown for each line.`
   : `Early-career pilot prioritising flying experience and pay:
-  1. Seniority eligibility (hard constraint)
-  2. Credit pay (paid on credit hours — more credit = more money)
-  3. Preferred aircraft (${p.preferredType})
-  4. Interesting destinations
-  5. Report time — avoids very early reports where possible
-  7. TAFB / nights away (lower priority at this career stage)`}
+  1. Credit pay (paid on credit hours — more credit = more money)
+  2. Interesting destinations
+  3. Report time — avoids very early reports where possible
+  4. TAFB / nights away (lower priority at this career stage)
+  5. Seniority eligibility (hard constraint)
+  Note on aircraft pay: B767 pairings pay approximately 4% more per credit hour than B737 pairings — this difference is already reflected in the pay figures shown for each line.`}
 
 == AVAILABLE PAIRINGS ==
 ${pairingBlock}
@@ -1333,25 +1343,26 @@ function buildLinePrompt(p){
   var W=function(k){ return w[k]+'%'; };
   var pilotProfile='Name: Capt. '+p.name+'\nAge: '+p.age+'\nFamily status: '+p.family
     +'\nHome base: '+p.homeBase+'\nAircraft qualifications: '+p.qualifiedTypes.join(', ')
-    +'\nPreferred aircraft: '+p.preferredType+'\nBase pay rate: $'+p.basePay+'/hr\nSeniority: #'+p.seniority;
+    +'\nBase pay rate: $'+p.basePay+'/hr\nSeniority: #'+p.seniority;
+  var payNote='  Note on aircraft pay: B767 pairings pay approximately 4% more per credit hour than B737 pairings — this difference is already reflected in the pay figures shown for each line.';
   var priority;
   if(hasKids){
     priority='This pilot has family obligations. They strongly prefer:\n'
     +'  1. Shorter total TAFB across the month (less time away from home)\n'
     +'  2. Fewer total hotel nights away (target: 8-10 nights/month)\n'
     +'  3. Later report times (after 08:00) to manage school runs\n'
-    +'  4. Preferred aircraft type: '+p.preferredType+'\n'
-    +'  5. Monthly pay >$'+Math.round(p.basePay*75).toLocaleString()+' ('+p.creditPay+'% weight on pay)';
+    +'  4. Monthly pay >$'+Math.round(p.basePay*75).toLocaleString()+' ('+W('creditPay')+' weight on pay)\n'
+    +payNote;
   } else if(isMid){
     priority='This pilot is mid-career and values work-life balance.\n'
     +'  1. Moderate nights away (10-14 nights/month)\n'
-    +'  2. Preferred aircraft: '+p.preferredType+'\n'
-    +'  3. Good monthly pay\n  4. Reasonable report times\n  5. Varied routes';
+    +'  2. Good monthly pay\n  3. Reasonable report times\n  4. Varied routes\n'
+    +payNote;
   } else {
     priority='This pilot is senior/maximising earnings.\n'
     +'  1. Maximum monthly credit pay ('+W('creditPay')+' weight)\n'
-    +'  2. Preferred aircraft: '+p.preferredType+'\n'
-    +'  3. Interesting international routes\n  4. Report times and nights away matter less';
+    +'  2. Interesting international routes\n  3. Report times and nights away matter less\n'
+    +payNote;
   }
   var lineBlocks=lines.map(function(ln){
     var qualified=lineQualified(p,ln);
@@ -2069,10 +2080,10 @@ function buildPwPrompt(pilot, pA, pB){
   const hasKids = pilot.family.includes('child')||pilot.family.includes('kids')||pilot.family.includes('parent');
   const profile = hasKids
     ? 'Has children — values short TAFB, fewer nights away, reasonable wake-up times highly.'
-    : pilot.age>=40 ? 'Mid-career — balances home-time and pay.' : 'Early career — prioritises pay and aircraft type.';
+    : pilot.age>=40 ? 'Mid-career — balances home-time and pay.' : 'Early career — prioritises pay.';
   return 'You are evaluating which of two flight pairings is better for a specific airline pilot.'+NL+NL+
     'PILOT: Capt. '+pilot.name+' | Age '+pilot.age+' | '+pilot.family+NL+
-    'Home base: BOS | Qualified: '+pilot.qualifiedTypes.join(', ')+' | Prefers: '+pilot.preferredType+NL+
+    'Home base: BOS | Qualified: '+pilot.qualifiedTypes.join(', ')+NL+
     'Pay rate: $'+pilot.basePay+'/hr on credit hours'+NL+
     profile+NL+NL+
     'OPTION 1:'+NL+pairingSummary(pA)+NL+NL+
@@ -2108,11 +2119,11 @@ function buildLinePwPrompt(pilot, lineA, lineB){
   var hasKids = pilot.family.includes('child')||pilot.family.includes('kids')||pilot.family.includes('parent');
   var profile  = hasKids
     ? 'Has children \u2014 values short total TAFB, fewer nights away, reasonable schedule.'
-    : pilot.age>=40 ? 'Mid-career \u2014 balances home-time and pay.' : 'Early career \u2014 prioritises pay and aircraft type.';
+    : pilot.age>=40 ? 'Mid-career \u2014 balances home-time and pay.' : 'Early career \u2014 prioritises pay.';
   return 'You are evaluating which of two monthly flight LINES is better for a specific airline pilot.'+NL+
     'A line is a full month\'s schedule made up of multiple pairings.'+NL+NL+
     'PILOT: Capt. '+pilot.name+' | Age '+pilot.age+' | '+pilot.family+NL+
-    'Home base: BOS | Qualified aircraft: '+pilot.qualifiedTypes.join(', ')+' | Prefers: '+pilot.preferredType+NL+
+    'Home base: BOS | Qualified aircraft: '+pilot.qualifiedTypes.join(', ')+NL+
     'Pay rate: $'+pilot.basePay+'/hr on credit hours'+NL+
     profile+NL+NL+
     lineSummary(lineA, 'OPTION 1')+NL+NL+
@@ -3264,7 +3275,6 @@ function exportJSON(){
     seniority: p.seniority,
     home_base: p.homeBase,
     qualified_types: p.qualifiedTypes,
-    preferred_type: p.preferredType,
     min_rest: p.minRest,
     base_pay: p.basePay,
     oracle_weights: p.weights,
@@ -3480,6 +3490,7 @@ function goNextFromSetup(){
 // ---------------------------------------------------------------------------
 
 function buildLines(){
+  if(lineGenMode === 'structured') return buildStructuredLines();
   // Use a fresh 25-pairing set built from a derived seed
   var lineSeed = (_seedQ ^ 0xBEEF) >>> 0;
   var pool = [];
@@ -3496,6 +3507,72 @@ function buildLines(){
     var lp = sorted.slice(i*PAIRINGS_PER_LINE,(i+1)*PAIRINGS_PER_LINE);
     result.push({ id:i+1, pairings:lp });
   }
+  return result;
+}
+
+function buildStructuredLines(){
+  // Seeded RNG — same derivation as random mode for reproducibility
+  var lineSeed = (_seedQ ^ 0xBEEF) >>> 0;
+  var n   = N_LINES;
+  var ppl = PAIRINGS_PER_LINE;
+
+  // Generate a 6× pool so each TAFB tier has ample B737 and B767 pairings.
+  // 50% B767 cap gives a balanced aircraft supply across tiers.
+  var poolSize = n * ppl * 6;
+  var allPairings = _buildAllPairingsForLines(lineSeed, poolSize, Math.round(poolSize * 0.5));
+
+  // Sort ascending by TAFB per pairing — dividing into thirds gives three tiers:
+  //   short  = lowest-TAFB third  (fewest nights away, most concentrated flying)
+  //   medium = middle third
+  //   long   = highest-TAFB third (most nights away, most layover time)
+  allPairings.sort(function(a, b){ return a.tafb - b.tafb; });
+
+  var third     = Math.floor(poolSize / 3);
+  var shortPool = allPairings.slice(0, third);
+  var medPool   = allPairings.slice(third, 2 * third);
+  var longPool  = allPairings.slice(2 * third);
+
+  // Line counts: floor(N/3) short, floor(N/3) medium, remainder long
+  var nShort  = Math.floor(n / 3);
+  var nMedium = Math.floor(n / 3);
+  var nLong   = n - nShort - nMedium;
+
+  var nextId = 1;
+  var result = [];
+
+  // Build `count` lines from `pool`, cycling aircraft type across lines:
+  //   position % 3 === 0 → all B737 (biddable by every pilot)
+  //   position % 3 === 1 → all B767 (biddable by dual-qualified pilots only)
+  //   position % 3 === 2 → all B737 (biddable by every pilot)
+  // Each line is single-aircraft-type so lineQualified() never excludes a pilot
+  // due to a lone wrong-type pairing buried inside an otherwise-compatible line.
+  // Aircraft variety lives across lines (2/3 B737, 1/3 B767), not within a line.
+  function buildTierLines(pool, count){
+    var b737 = pool.filter(function(p){ return p.aircraft === 'B737'; });
+    var b767 = pool.filter(function(p){ return p.aircraft === 'B767'; });
+    var b737i = 0, b767i = 0;
+    var tierLines = [];
+    for(var li = 0; li < count; li++){
+      var useB767 = (li % 3 === 1); // every third line (1-indexed positions 2,5,8…) is B767
+      var src = useB767 ? b767 : b737;
+      var idx = useB767 ? b767i : b737i;
+      var pairings = [];
+      for(var j = 0; j < ppl && idx < src.length; j++) pairings.push(src[idx++]);
+      if(useB767) b767i = idx; else b737i = idx;
+      // Fallback padding if pool runs unexpectedly short
+      while(pairings.length < ppl){
+        if(b737i < b737.length) pairings.push(b737[b737i++]);
+        else if(b767i < b767.length) pairings.push(b767[b767i++]);
+        else break;
+      }
+      tierLines.push({ id: nextId++, pairings: pairings });
+    }
+    return tierLines;
+  }
+
+  result = result.concat(buildTierLines(shortPool, nShort));
+  result = result.concat(buildTierLines(medPool,   nMedium));
+  result = result.concat(buildTierLines(longPool,  nLong));
   return result;
 }
 
@@ -3665,12 +3742,15 @@ function oracleScoreLine(pilot, line){
     return rm>=420?100:Math.max(0,Math.round((rm-240)/(420-240)*100));
   };
   var reportS=Math.round(line.pairings.reduce(function(s,p){ return s+repScore(p.reportTimeMins); },0)/line.pairings.length);
-  var prefCount=line.pairings.filter(function(p){ return p.aircraft===pilot.preferredType; }).length;
-  var acS=Math.round(prefCount/line.pairings.length*100);
-  var totalCr=lineTotalCreditHours(line);
-  var expected=85, floor=expected*0.85, range=expected*0.40;
-  var payS=Math.max(0,Math.min(100,Math.round((totalCr-floor)/range*100)));
-  var score=(tafbS*W.tafb+hotelS*W.hotelNights+reportS*W.reportTime+acS*W.aircraft+payS*W.creditPay)/100;
+  // Pay score — B767 pairings earn 4% more per credit hour
+  var effectivePay=line.pairings.reduce(function(s,p){
+    var rate=p.aircraft==='B767' ? pilot.basePay*1.04 : pilot.basePay;
+    return s+Math.round(p.creditHours*rate);
+  },0);
+  var baselinePay=pilot.basePay*lineTotalCreditHours(line);
+  var floor=baselinePay*0.85, range=baselinePay*0.40;
+  var payS=Math.max(0,Math.min(100,Math.round((effectivePay-floor)/range*100)));
+  var score=(tafbS*W.tafb+hotelS*W.hotelNights+reportS*W.reportTime+payS*W.creditPay)/100;
   return Math.max(0,Math.min(100,Math.round(score)));
 }
 
@@ -3725,6 +3805,16 @@ function toggleLineMode(){
 function newLines(){
   _seedQ=(_lcg(_seedQ)+1)|0;
   lines=buildLines();
+  renderSetupLines();
+  renderOracleLines();
+  _resetEvalState();
+}
+
+function setLineGenMode(mode){
+  lineGenMode = mode;
+  var note = document.getElementById('structuredModeNote');
+  if(note) note.style.display = mode === 'structured' ? '' : 'none';
+  lines = buildLines();
   renderSetupLines();
   renderOracleLines();
   _resetEvalState();
@@ -4019,7 +4109,8 @@ function computeTiedRanking(lineIds, scores, method, stdDevs) {
     } else if (method === 'scoring' && stdDevs) {
       var meanA = scores[leaderId] || 0, stdA = stdDevs[leaderId] || 0;
       var meanB = scores[id] || 0, stdB = stdDevs[id] || 0;
-      tied = (meanA - stdA <= meanB + stdB) && (meanB - stdB <= meanA + stdA);
+      var ciOverlap = (meanA - stdA <= meanB + stdB) && (meanB - stdB <= meanA + stdA);
+      tied = Math.abs(meanA - meanB) < 5 && ciOverlap;
     }
     if (tied) {
       currentGroup.push(id);
@@ -5481,11 +5572,29 @@ function computeAllCorrelations() {
       top3[m] = list.filter(function(r){return r.rank<=3;}).filter(function(r){return oTop3[r[idKey]];}).length;
     });
 
-    // Within-method consistency ρ
+    // Within-method consistency ρ — pairwise computed explicitly per pilot
+    var pwWithin = null;
+    if(pwS && pwS.runs && pwS.runs.length >= 2){
+      var _run1 = pwS.runs[0].bt_ranking;
+      var _run2 = pwS.runs[1].bt_ranking;
+      if(_run1 && _run1.length && _run2 && _run2.length){
+        var _rho12 = +(_spearmanBetween(_run1, _run2, 'id').toFixed(3));
+        console.log(pilot.name, "pairwise r1 vs r2:", _rho12);
+        var _r1_r3 = null, _r2_r3 = null, _minRho = _rho12;
+        if(pwS.runs.length >= 3 && pwS.runs[2].bt_ranking){
+          var _run3 = pwS.runs[2].bt_ranking;
+          _r1_r3 = +(_spearmanBetween(_run1, _run3, 'id').toFixed(3));
+          _r2_r3 = +(_spearmanBetween(_run2, _run3, 'id').toFixed(3));
+          _minRho = Math.min(_rho12, _r1_r3, _r2_r3);
+        }
+        pwWithin = { r1_r2: _rho12, r1_r3: _r1_r3, r2_r3: _r2_r3,
+                     status: _minRho > 0.9 ? 'stable' : _minRho >= 0.7 ? 'marginal' : 'unstable' };
+      }
+    }
     var within = {
       rankall:  _withinMethodRho(raS, 'rankall'),
       scoring:  _withinMethodRho(scS, 'scoring'),
-      pairwise: _withinMethodRho(pwS, 'pairwise'),
+      pairwise: pwWithin,
     };
 
     return {pilot:pilot, lists:lists, corr:corr, top1:top1, top3:top3, oMap:oMap, within:within,

@@ -177,10 +177,10 @@ class ScenarioGenerator:
             age           = rng.randint(26, 58)
             family        = rng.choice(FAMILY_OPTIONS)
             wide_qual     = rng.random() > 0.35
-            preferred     = ("B767" if wide_qual and rng.random() > 0.5
-                             else "B737")
+            _ = rng.random()          # consume RNG tick to keep seed deterministic
             qualified     = ["B737", "B767"] if wide_qual else ["B737"]
-            base_pay      = lookup_pay_rate(age, preferred)
+            primary_ac    = "B767" if wide_qual else "B737"
+            base_pay      = lookup_pay_rate(age, primary_ac)
             min_rest      = rng.randint(10, 14)
 
             pilot = Pilot(
@@ -191,7 +191,6 @@ class ScenarioGenerator:
                 seniority=i + 1,
                 home_base=base,
                 qualified_types=qualified,
-                preferred_type=preferred,
                 min_rest=min_rest,
                 base_pay=base_pay,
             )

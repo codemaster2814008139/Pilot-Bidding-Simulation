@@ -146,22 +146,26 @@ def _pilot_profile(pilot: Pilot) -> str:
         f"Family status: {pilot.family_status}\n"
         f"Home base: {pilot.home_base}\n"
         f"Aircraft qualifications: {', '.join(pilot.qualified_types)}\n"
-        f"Preferred aircraft: {pilot.preferred_type}\n"
         f"Minimum rest required between duties: {pilot.min_rest}h\n"
         f"Base pay rate: ${pilot.base_pay}/hr (credit hours are paid, not just block)"
     )
 
 
 def _priority_list(pilot: Pilot) -> str:
+    pay_note = (
+        "Note on aircraft pay: B767 pairings pay approximately 4% more per credit hour "
+        "than B737 pairings — this difference is already reflected in the pay figures "
+        "shown for each line."
+    )
     if pilot.has_kids:
         return (
             "This pilot has family obligations. They strongly prefer:\n"
             "  1. Shorter TAFB (less time away from home)\n"
             "  2. Fewer hotel nights away\n"
             "  3. Reasonable report times — early reports are disruptive\n"
-            "  4. Qualified aircraft type they prefer\n"
-            "  5. Higher credit pay and per diem\n"
-            "  6. Convenient start day of week"
+            "  4. Higher credit pay and per diem\n"
+            "  5. Convenient start day of week\n"
+            f"  {pay_note}"
         )
     elif pilot.is_mid_career:
         return (
@@ -169,18 +173,18 @@ def _priority_list(pilot: Pilot) -> str:
             "  1. Reasonable TAFB (not too long)\n"
             "  2. Hotel nights away — this pilot prefers trips with overnight stays over quick turns; more nights means more per diem income and richer flying experience\n"
             "  3. Report times — avoids very early reports where possible\n"
-            "  4. Preferred aircraft type\n"
-            "  5. Credit pay and per diem\n"
-            "  6. Start day of week"
+            "  4. Credit pay and per diem\n"
+            "  5. Start day of week\n"
+            f"  {pay_note}"
         )
     else:
         return (
             "Early-career pilot. They prioritise flying and compensation:\n"
-            "  1. Qualified aircraft type (ideally preferred)\n"
-            "  2. Higher credit pay and per diem\n"
-            "  3. Interesting destinations and routes\n"
-            "  4. Report times (some tolerance for early reports)\n"
-            "  5. Hotel nights — actively preferred; overnight layovers mean more per diem pay and more hours building experience, which is valuable at this stage of their career"
+            "  1. Higher credit pay and per diem\n"
+            "  2. Interesting destinations and routes\n"
+            "  3. Report times (some tolerance for early reports)\n"
+            "  4. Hotel nights — actively preferred; overnight layovers mean more per diem pay and more hours building experience, which is valuable at this stage of their career\n"
+            f"  {pay_note}"
         )
 
 
@@ -266,8 +270,7 @@ def generate_anchor(pilot: Pilot) -> str:
     understands what 90-100, 45-55, and 0-15 mean for THIS specific pilot.
     The anchor is embedded in the scoring prompt to reduce inter-call variance.
     """
-    w   = pilot.weights
-    ac  = pilot.preferred_type
+    w        = pilot.weights
     high_pay = round(pilot.base_pay * 7)
     mid_pay  = round(pilot.base_pay * 5)
     low_pay  = round(pilot.base_pay * 3)
@@ -275,41 +278,40 @@ def generate_anchor(pilot: Pilot) -> str:
     if pilot.has_kids:
         top_desc = (
             f"0 hotel nights (home each day), TAFB under 30h, "
-            f"{ac} aircraft, report after 8am, "
-            f"pay above ${high_pay:,}/trip"
+            f"report after 8am, pay above ${high_pay:,}/trip"
         )
         mid_desc = (
-            f"1–2 hotel nights, TAFB 40–55h, acceptable aircraft, "
+            f"1–2 hotel nights, TAFB 40–55h, "
             f"report 5–7am, pay ~${mid_pay:,}/trip"
         )
         low_desc = (
-            f"wrong aircraft type (not qualified), TAFB over 70h, "
+            f"not qualified for aircraft (ineligible), TAFB over 70h, "
             f"2+ nights away, report before 5am, pay under ${low_pay:,}/trip"
         )
     elif pilot.is_mid_career:
         top_desc = (
-            f"preferred {ac} aircraft, TAFB under 35h, 1 night away, "
+            f"TAFB under 35h, 1 night away, "
             f"report after 7am, total value over ${high_pay:,}/trip"
         )
         mid_desc = (
-            f"acceptable aircraft, TAFB 45–60h, 2 nights, "
+            f"TAFB 45–60h, 2 nights, "
             f"report 5:30–7am, pay ~${mid_pay:,}/trip"
         )
         low_desc = (
-            f"wrong aircraft type, TAFB over 75h, 3+ nights, "
+            f"not qualified (ineligible), TAFB over 75h, 3+ nights, "
             f"report before 4:30am, low pay"
         )
     else:
         top_desc = (
-            f"preferred {ac} aircraft, interesting route, "
-            f"high credit pay over ${high_pay:,}/trip, good per diem"
+            f"high credit pay over ${high_pay:,}/trip, good per diem, "
+            f"interesting route"
         )
         mid_desc = (
-            f"acceptable aircraft, moderate pay ~${mid_pay:,}/trip, "
+            f"moderate pay ~${mid_pay:,}/trip, "
             f"mixed schedule"
         )
         low_desc = (
-            f"not qualified for aircraft, very low pay, "
+            f"not qualified for aircraft (ineligible), very low pay, "
             f"tedious short hops, report before 4am"
         )
 
@@ -319,7 +321,7 @@ def generate_anchor(pilot: Pilot) -> str:
         f"  45–55:  {mid_desc}\n"
         f"  0–15:   {low_desc}\n"
         f"  Weight priorities: TAFB ({w.tafb}%), hotel nights ({w.hotel_nights}%), "
-        f"report time ({w.report_time}%), aircraft ({w.aircraft}%), "
+        f"report time ({w.report_time}%), "
         f"credit pay ({w.credit_pay}%)"
     )
 
@@ -445,48 +447,47 @@ def generate_line_anchor(pilot: Pilot) -> str:
     specific pilot.  Values are derived from oracle weights and profile.
     """
     w        = pilot.weights
-    ac       = pilot.preferred_type
     high_pay = round(pilot.base_pay * 85 * 1.15)   # 15% above expected month
     mid_pay  = round(pilot.base_pay * 85)            # baseline monthly
     low_pay  = round(pilot.base_pay * 85 * 0.80)
 
     if pilot.has_kids:
         top_desc = (
-            f"all {ac} aircraft, total TAFB < 130h, 8–9 nights away, "
+            f"total TAFB < 130h, 8–9 nights away, "
             f"all reports after 8am, total monthly value > ${high_pay:,}"
         )
         mid_desc = (
-            f"mixed aircraft (some {ac}), total TAFB ~200h, 11–13 nights, "
+            f"total TAFB ~200h, 11–13 nights, "
             f"some early reports, pay ~${mid_pay:,}/month"
         )
         low_desc = (
-            f"wrong aircraft throughout, total TAFB > 300h, 15+ nights away, "
+            f"contains unqualified aircraft (ineligible), total TAFB > 300h, 15+ nights away, "
             f"multiple 4am reports, pay under ${low_pay:,}/month"
         )
     elif pilot.is_mid_career:
         top_desc = (
-            f"mostly {ac} aircraft, TAFB < 150h, 10–12 nights, "
+            f"TAFB < 150h, 10–12 nights, "
             f"reports after 7am, monthly value > ${high_pay:,}"
         )
         mid_desc = (
-            f"mixed aircraft, TAFB ~200h, 12–14 nights, "
+            f"TAFB ~200h, 12–14 nights, "
             f"some early reports, pay ~${mid_pay:,}/month"
         )
         low_desc = (
-            f"wrong aircraft, TAFB > 300h, 15+ nights, "
+            f"contains unqualified aircraft (ineligible), TAFB > 300h, 15+ nights, "
             f"many early-morning reports, low pay"
         )
     else:
         top_desc = (
-            f"preferred {ac} aircraft, high monthly credit pay > ${high_pay:,}, "
-            f"varied international routes, reasonable report times"
+            f"high monthly credit pay > ${high_pay:,}, "
+            f"varied routes, reasonable report times"
         )
         mid_desc = (
-            f"mixed aircraft, moderate pay ~${mid_pay:,}/month, "
+            f"moderate pay ~${mid_pay:,}/month, "
             f"standard domestic schedule"
         )
         low_desc = (
-            f"disqualified aircraft, low pay, all very short hops, "
+            f"contains unqualified aircraft (ineligible), low pay, all very short hops, "
             f"multiple early-morning reports"
         )
 
@@ -496,7 +497,7 @@ def generate_line_anchor(pilot: Pilot) -> str:
         f"  45–55  (acceptable):    {mid_desc}\n"
         f"  0–15   (unacceptable):  {low_desc}\n"
         f"  Weight priorities: TAFB ({w.tafb}%), hotel nights ({w.hotel_nights}%), "
-        f"report time ({w.report_time}%), aircraft ({w.aircraft}%), "
+        f"report time ({w.report_time}%), "
         f"credit pay ({w.credit_pay}%)"
     )
 

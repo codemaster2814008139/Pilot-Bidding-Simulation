@@ -22,23 +22,21 @@ if TYPE_CHECKING:
 class OracleWeights:
     """
     Preference weights used by the oracle scorer.
-    Five factors — must sum to 100.
+    Four factors — must sum to 100.
 
     Derivation from pilot profile (as in the POC):
       - tafb, hotel_nights: derived from family status and age
       - report_time:        fixed at 12 for all pilots
-      - aircraft:           35% of remainder
-      - credit_pay:         remainder after all other weights
+      - credit_pay:         remainder after tafb + hotel_nights + report_time
+                            (absorbs the former aircraft weight)
     """
     tafb:         int = 20
     hotel_nights: int = 18
     report_time:  int = 12
-    aircraft:     int = 17   # ~35% of remainder
-    credit_pay:   int = 33   # fills to 100
+    credit_pay:   int = 50   # fills to 100
 
     def total(self) -> int:
-        return (self.tafb + self.hotel_nights + self.report_time
-                + self.aircraft + self.credit_pay)
+        return self.tafb + self.hotel_nights + self.report_time + self.credit_pay
 
     def validate(self) -> bool:
         return self.total() == 100
@@ -167,7 +165,6 @@ class Pilot:
     seniority:       int   # 1 = most senior
     home_base:       str   # e.g. 'BOS'
     qualified_types: List[str]  # e.g. ['B737', 'B767']
-    preferred_type:  str
     min_rest:        int   # minimum rest hours required
     base_pay:        float # hourly rate in USD
     weights:         OracleWeights = field(default_factory=OracleWeights)
@@ -188,15 +185,12 @@ class Pilot:
         """
         hotel_w  = 26 if self.has_kids else (16 if self.is_mid_career else 9)
         tafb_w   = 22 if self.has_kids else (15 if self.is_mid_career else 9)
-        report_w = 12  # fixed for all pilots (commute removed)
-        rem      = 100 - hotel_w - tafb_w - report_w
-        aircraft_w  = round(rem * 0.35)
-        credit_w    = 100 - hotel_w - tafb_w - report_w - aircraft_w
+        report_w = 12  # fixed for all pilots
+        credit_w = 100 - hotel_w - tafb_w - report_w
         return OracleWeights(
             tafb=tafb_w,
             hotel_nights=hotel_w,
             report_time=report_w,
-            aircraft=aircraft_w,
             credit_pay=credit_w
         )
 
